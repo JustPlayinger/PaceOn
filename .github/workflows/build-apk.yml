@@ -76,6 +76,7 @@ jobs:
           VAR="${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}"
           echo "1. base64 len: ${#VAR}"
           if [ -n "$VAR" ]; then
+            mkdir -p ~/.android
             printf '%s' "$VAR" | base64 -d > ~/.android/debug.keystore 2>/tmp/b64err || { cat /tmp/b64err; exit 1; }
             echo "2. keystore size: $(stat -c%s ~/.android/debug.keystore)"
             echo "3. keytool 结果："
