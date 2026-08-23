@@ -923,6 +923,15 @@ Stage Summary:
 ## 下一阶段建议（优先级排序）
 1. 训练目标进度追踪（距目标赛事剩余周数、当前预估完赛时间、达标概率）
 2. 课表导出为图片/PDF（便于分享给教练）
+## 2026-08-23 · 打包 v1.2.0（APK + Windows EXE）+ 字体本地化
+- 版本升级：APK versionCode 3 / versionName 1.2.0；桌面版 desktop/package.json 1.2.0
+- 字体本地化：next/font/google（Geist）改用 geist npm 包（本地字体文件），彻底摆脱 Google Fonts 网络依赖（此前本地/CI 构建会因访问 fonts.googleapis.com 失败而中断）
+- 本地产物：
+  - APK：android/app/build/outputs/apk/debug/app-debug.apk（42.9MB，签名 SHA-256 9490e7a4 固定 keystore，可覆盖安装）
+  - EXE：desktop/release/PaceOn Setup 1.2.0.exe（NSIS 安装器）+ PaceOn 1.2.0.exe（便携版）
+- 构建环境：本机 Android SDK（F:\android_studio\sdk）+ JDK21（F:\java\jdk-21.0.12+8）；Gradle 8.14.3 复用旧 hash 缓存目录绕过 wrapper 网络下载
+- 发布：push tag v1.2.0 触发 CI 自动构建 APK 并创建 GitHub Release；本地 EXE 上传 Release（需 GITHUB_TOKEN）
+
 3. 多用户支持（NextAuth + 数据隔离）
 4. 移动端 PWA 适配（离线查看课表）
 5. 训练提醒（WebSocket 实时推送当日训练提醒）
