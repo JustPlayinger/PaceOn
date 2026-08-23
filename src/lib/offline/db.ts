@@ -71,6 +71,15 @@ CREATE TABLE IF NOT EXISTS PersonalRecord (
   date TEXT, location TEXT, raceName TEXT, paceSec INTEGER, notes TEXT,
   createdAt TEXT, updatedAt TEXT
 );
+CREATE TABLE IF NOT EXISTS TrainingLog (
+  id TEXT PRIMARY KEY, date TEXT NOT NULL, distance REAL, duration INTEGER,
+  avgPace TEXT, avgPaceSec INTEGER, avgHr INTEGER, maxHr INTEGER, elevation INTEGER,
+  cadence INTEGER, calories INTEGER, weather TEXT, temperature REAL,
+  rpe INTEGER, feeling INTEGER, feelingNote TEXT, imageDataUrl TEXT,
+  rawExtract TEXT, notes TEXT, shoeId TEXT, source TEXT DEFAULT 'manual',
+  createdAt TEXT, updatedAt TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_log_date ON TrainingLog(date);
 `// ---------- IndexedDB 持久化 ----------
 
 function idbGet(key: string): Promise<Uint8Array | null> {
@@ -139,6 +148,17 @@ function columnExists(table: string, column: string): boolean {
  */
 function migrateSchema(): void {
   if (!db) return
+  if (!tableExists('TrainingLog')) {
+    db.run(`CREATE TABLE IF NOT EXISTS TrainingLog (
+      id TEXT PRIMARY KEY, date TEXT NOT NULL, distance REAL, duration INTEGER,
+      avgPace TEXT, avgPaceSec INTEGER, avgHr INTEGER, maxHr INTEGER, elevation INTEGER,
+      cadence INTEGER, calories INTEGER, weather TEXT, temperature REAL,
+      rpe INTEGER, feeling INTEGER, feelingNote TEXT, imageDataUrl TEXT,
+      rawExtract TEXT, notes TEXT, shoeId TEXT, source TEXT DEFAULT 'manual',
+      createdAt TEXT, updatedAt TEXT
+    )`)
+    db.run('CREATE INDEX IF NOT EXISTS idx_log_date ON TrainingLog(date)')
+  }
   if (!tableExists('TrainingPlan')) {
     db.run('CREATE TABLE IF NOT EXISTS TrainingPlan (id TEXT PRIMARY KEY, title TEXT, goal TEXT, targetRace TEXT, active INTEGER DEFAULT 1, startedAt TEXT, createdAt TEXT, updatedAt TEXT)')
   }
@@ -238,4 +258,89 @@ export function uid(): string {
 
 export function nowIso(): string {
   return new Date().toISOString()
+}
+
+// ---------- TrainingLog（独立历史训练记录）辅助 ----------
+
+export interface TrainingLogRow {
+  id: string
+  date: string
+  distance: number | null
+  duration: number | null
+  avgPace: string | null
+  avgPaceSec: number | null
+  avgHr: number | null
+  maxHr: number | null
+  elevation: number | null
+  cadence: number | null
+  calories: number | null
+  weather: string | null
+  temperature: number | null
+  rpe: number | null
+  feeling: number | null
+  feelingNote: string | null
+  imageDataUrl: string | null
+  rawExtract: string | null
+  notes: string | null
+  shoeId: string | null
+  source: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** 按日期区间查询历史训练记录（from/to 为 Date 或 ISO 字符串，含两端） */
+export function logsBetween(from: Date | string, to: Date | string): TrainingLogRow[] {
+  const f = typeof from === 'string' ? from : from.toISOString()
+  const t = typeof to === 'string' ? to : to.toISOString()
+  return all<TrainingLogRow>('SELECT * FROM TrainingLog WHERE date >= ? AND date <= ? ORDER BY date ASC', [f, t])
+}
+
+/** 最近 N 天（含今天）的历史训练记录 */
+export function logsRecentDays(days: number): TrainingLogRow[] {
+  const from = new Date(Date.now() - (days - 1) * 86400000)
+  from.setHours(0, 0, 0, 0)
+  const to = new Date()
+  to.setHours(23, 59, 59, 999)
+  return logsBetween(from, to)
+}
+
+/** 插入一条历史训练记录 */
+export function insertLog(data: Partial<TrainingLogRow>): TrainingLogRow {
+  const now = nowIso()
+  const id = data.id || uid()
+  run(
+    `INSERT INTO TrainingLog (id, date, distance, duration, avgPace, avgPaceSec, avgHr, maxHr, elevation, cadence, calories, weather, temperature, rpe, feeling, feelingNote, imageDataUrl, rawExtract, notes, shoeId, source, createdAt, updatedAt)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      id,
+      data.date || now,
+      data.distance ?? null,
+      data.duration ?? null,
+      data.avgPace ?? null,
+      data.avgPaceSec ?? null,
+      data.avgHr ?? null,
+      data.maxHr ?? null,
+      data.elevation ?? null,
+      data.cadence ?? null,
+      data.calories ?? null,
+      data.weather ?? null,
+      data.temperature ?? null,
+      data.rpe ?? null,
+      data.feeling ?? null,
+      data.feelingNote ?? null,
+      data.imageDataUrl ?? null,
+      data.rawExtract ?? null,
+      data.notes ?? null,
+      data.shoeId ?? null,
+      data.source || 'manual',
+      now,
+      now,
+    ],
+  )
+  return get<TrainingLogRow>('SELECT * FROM TrainingLog WHERE id = ?', [id])!
+}
+
+/** 删除一条历史训练记录 */
+export function deleteLog(id: string): void {
+  run('DELETE FROM TrainingLog WHERE id = ?', [id])
 }

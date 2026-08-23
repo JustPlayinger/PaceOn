@@ -1,13 +1,28 @@
 /**
  * 离线 API - AI handler（extract / review / plan / chat-plan / adjust / 单次分析 / 数据导入导出）
  */
-import { all, get, run, uid, nowIso } from '../db'
+import { all, get, run, uid, nowIso, logsRecentDays } from '../db'
 import { parseFieldsFromText, detectAppSource } from '@/lib/ocr/parse'
 import { ocrImageBrowser, toDataUrl } from '../ocr'
 import { getDeepseekConfig } from '../config'
-import { callDeepseekApi, OCR_PARSE_PROMPT, parseExtractedFields, generateWeeklyReview, generateNextWeekPlan, generateInitialPlan, generatePlanFromChat, chatWithCoach, generateMicroAdjust, analyzeSingleSession, type RunnerProfile, type SessionForReview } from '../ai'
+import { callDeepseekApi, OCR_PARSE_PROMPT, parseExtractedFields, generateWeeklyReview, generateNextWeekPlan, generateInitialPlan, generatePlanFromChat, chatWithCoach, generateMicroAdjust, analyzeSingleSession, type RunnerProfile, type SessionForReview, type RecentTrainingLog } from '../ai'
 import type { ApiRequest, Handler } from '../types'
 import { json, methodErr, nextMondayOf, findWeekStartingOn, getOrCreateActivePlan, weekFull } from './core'
+
+/** 最近 14 天补录历史训练 → AI 输入结构 */
+function recentLogsForAi(): RecentTrainingLog[] {
+  return logsRecentDays(14).map((l) => ({
+    date: (l.date as string).slice(0, 10),
+    distance: l.distance,
+    duration: l.duration,
+    avgPace: l.avgPace,
+    avgHr: l.avgHr,
+    elevation: l.elevation,
+    rpe: l.rpe,
+    feeling: l.feeling,
+    notes: l.notes,
+  }))
+}
 
 function runnerProfile(): RunnerProfile | null {
   const r = get('SELECT * FROM Runner LIMIT 1')
@@ -105,7 +120,7 @@ const planHandler: Handler = async (req) => {
     const maxNum = get('SELECT MAX(weekNumber) AS m FROM TrainingWeek WHERE planId = ?', [activePlan.id]) as { m: number | null } | null
     weekNumber = ((maxNum?.m as number) || 0) + 1
   }
-  plan = fromWeekFound ? await generateNextWeekPlan(runner, lastWeekSessions, lastReview, weekNumber) : await generateInitialPlan(runner)
+  plan = fromWeekFound ? await generateNextWeekPlan(runner, lastWeekSessions, lastReview, weekNumber, recentLogsForAi()) : await generateInitialPlan(runner)
   const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)
   const id = uid()
   const now = nowIso()
@@ -152,7 +167,7 @@ const chatPlanHandler: Handler = async (req) => {
       const maxNum = get('SELECT MAX(weekNumber) AS m FROM TrainingWeek WHERE planId = ?', [activePlan.id]) as { m: number | null } | null
       weekNumber = ((maxNum?.m as number) || 0) + 1
     }
-    const plan = await generatePlanFromChat(runner, (history || []).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })), lastWeekSessions, lastReview)
+    const plan = await generatePlanFromChat(runner, (history || []).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })), lastWeekSessions, lastReview, recentLogsForAi())
     const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)
     const id = uid()
     const now = nowIso()

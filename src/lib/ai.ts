@@ -574,6 +574,19 @@ export interface PlanResult {
   summary: string
 }
 
+/** 独立历史训练记录（补录）的 AI 输入结构 */
+export interface RecentTrainingLog {
+  date: string
+  distance: number | null
+  duration: number | null
+  avgPace: string | null
+  avgHr: number | null
+  elevation: number | null
+  rpe: number | null
+  feeling: number | null
+  notes: string | null
+}
+
 const sessionTemplates: PlannedSession[] = [
   { dayOfWeek: 1, type: 'easy', plannedDistance: 8, plannedDuration: 50, plannedPace: '6:00/km', intensity: 'Z2', description: '轻松跑 8km，注意呼吸与放松。' },
   { dayOfWeek: 2, type: 'rest', plannedDistance: null, plannedDuration: null, plannedPace: null, intensity: 'rest', description: '休息日，可拉伸或进行低强度活动。' },
@@ -609,12 +622,14 @@ export async function generateNextWeekPlan(
   runner: RunnerProfile,
   lastWeekSessions: SessionForReview[],
   lastReview: string | null,
-  weekNumber: number
+  weekNumber: number,
+  recentLogs: RecentTrainingLog[] = []
 ): Promise<PlanResult> {
   if (USE_MOCK_DATA) {
     const lastDistance = lastWeekSessions.reduce((sum, s) => sum + (s.completion?.distance || 0), 0)
+    const logDistance = recentLogs.reduce((sum, l) => sum + (l.distance || 0), 0)
     const baseMileage = runner.weeklyMileage ?? 40
-    const totalMileage = Math.max(30, Math.round((lastDistance || baseMileage) * 1.05))
+    const totalMileage = Math.max(30, Math.round(((lastDistance || logDistance) || baseMileage) * 1.05))
     const phase = weekNumber >= 4 ? 'build' : weekNumber >= 8 ? 'peak' : weekNumber >= 10 ? 'taper' : 'base'
     return buildPlan(runner, totalMileage, phase, weekNumber, lastReview ?? undefined)
   }
@@ -627,6 +642,9 @@ ${JSON.stringify(runner, null, 2)}
 == 上周训练完成情况 ==
 ${JSON.stringify(lastWeekSessions, null, 2)}
 
+== 近期实际训练记录（补录/历史实跑，含日期） ==
+${recentLogs.length > 0 ? JSON.stringify(recentLogs, null, 2) : '无'}
+
 == 上周 AI 点评 ==
 ${lastReview || '无'}
 
@@ -637,6 +655,7 @@ ${lastReview || '无'}
 4. 配速基于跑者目标成绩与当前水平
 5. 周跑量参考跑者档案 weeklyMileage，渐进增加
 6. 每节课给出明确的训练内容描述（如热身、主课组数与配速、冷身）
+7. 结合"近期实际训练记录"评估跑者当前状态与疲劳：若近期跑量偏高或体感差，适当降低下周强度与跑量；若近期训练不足，从合理强度起步
 
 请严格按以下 JSON 格式返回（只返回 JSON）：
 {
@@ -661,8 +680,9 @@ ${lastReview || '无'}
     return parsePlanResult(response)
   } catch {
     const lastDistance = lastWeekSessions.reduce((sum, s) => sum + (s.completion?.distance || 0), 0)
+    const logDistance = recentLogs.reduce((sum, l) => sum + (l.distance || 0), 0)
     const baseMileage = runner.weeklyMileage ?? 40
-    const totalMileage = Math.max(30, Math.round((lastDistance || baseMileage) * 1.05))
+    const totalMileage = Math.max(30, Math.round(((lastDistance || logDistance) || baseMileage) * 1.05))
     const phase = weekNumber >= 4 ? 'build' : weekNumber >= 8 ? 'peak' : weekNumber >= 10 ? 'taper' : 'base'
     return buildPlan(runner, totalMileage, phase, weekNumber, lastReview ?? undefined)
   }
@@ -970,6 +990,7 @@ export async function generatePlanFromChat(
   chatHistory: ChatMessage[],
   lastWeekSessions?: SessionForReview[],
   lastReview?: string | null,
+  recentLogs: RecentTrainingLog[] = [],
 ): Promise<PlanResult> {
   if (USE_MOCK_DATA) {
     const totalMileage = runner?.weeklyMileage ?? 40
@@ -981,6 +1002,9 @@ export async function generatePlanFromChat(
   const lastWeekInfo = lastWeekSessions && lastWeekSessions.length > 0
     ? `上周训练完成情况：${JSON.stringify(lastWeekSessions, null, 2)}`
     : '无上周训练数据'
+  const recentLogsInfo = recentLogs.length > 0
+    ? `近期实际训练记录（补录/历史实跑，含日期）：${JSON.stringify(recentLogs, null, 2)}`
+    : '无近期实际训练记录'
   const reviewInfo = lastReview ? `上周 AI 点评：${lastReview}` : '无上周点评'
 
   const userPrompt = `${runnerInfo}
@@ -990,6 +1014,7 @@ ${conversationSummary}
 
 == 上周训练数据 ==
 ${lastWeekInfo}
+${recentLogsInfo}
 ${reviewInfo}
 
 请基于以上所有信息（以对话中跑者的实际情况为准）生成下周训练课表，要求：
@@ -1002,6 +1027,7 @@ ${reviewInfo}
 7. 每节课给出明确的训练内容描述（距离/配速/组数/强度）
 8. weekGoal 一句话概括本周重点，体现跑者的特殊情况（如"膝伤恢复期，低强度稳步提升"）
 9. 力量训练：若跑者需要或安排 cross 课时，description 中写明具体力量动作（如深蹲/弓步蹲/硬拉/核心/臀腿等）与组数次数
+10. 结合"近期实际训练记录"评估跑者当前状态与疲劳：近期跑量偏高或体感差则降低强度，训练不足则从合理强度起步
 
 请严格按以下 JSON 格式返回（不要输出 JSON 之外的内容）：
 {

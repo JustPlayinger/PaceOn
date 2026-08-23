@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Upload, FileImage, X, Sparkles, Loader2, Save, RefreshCw, ChevronDown, Heart, Mountain, Cloud, Flame, Timer, Gauge, TrendingUp, Activity, Thermometer, Droplets, Wind, Footprints } from 'lucide-react'
+import { Upload, FileImage, X, Sparkles, Loader2, Save, RefreshCw, ChevronDown, Heart, Mountain, Cloud, Flame, Timer, Gauge, TrendingUp, Activity, Thermometer, Droplets, Wind, Footprints, Calendar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +19,7 @@ interface Props {
   selectedSessionId: string | null
   setSelectedSessionId: (id: string | null) => void
   refresh: () => void
+  logDate?: string | null
 }
 
 interface ExtractedData {
@@ -53,7 +54,7 @@ interface ExtractedData {
   notes: string | null
 }
 
-export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, refresh }: Props) {
+export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, refresh, logDate: logDateProp }: Props) {
   const { toast } = useToast()
   const [imageBase64, setImageBase64] = useState<string | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
@@ -62,6 +63,20 @@ export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, 
   const [saving, setSaving] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 上传模式：session=绑定本周训练课；log=补录历史训练（指定日期）
+  const [mode, setMode] = useState<'session' | 'log'>('session')
+  const [logDate, setLogDate] = useState<string>(() => {
+    if (logDateProp) return logDateProp
+    const d = new Date()
+    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`
+  })
+  useEffect(() => {
+    if (logDateProp) {
+      setMode('log')
+      setLogDate(logDateProp)
+    }
+  }, [logDateProp])
 
   // 表单字段
   const [form, setForm] = useState({
@@ -200,6 +215,55 @@ export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, 
   }
 
   const handleSave = async () => {
+    if (mode === 'log') {
+      if (!logDate) {
+        toast({ title: '请选择训练日期', variant: 'destructive' })
+        return
+      }
+      setSaving(true)
+      try {
+        const avgPaceSec = paceToSec(form.avgPace)
+        const payload = {
+          date: logDate,
+          distance: form.distance ? parseFloat(form.distance) : null,
+          duration: form.duration ? Math.round(parseFloat(form.duration) * 60) : null,
+          avgPace: form.avgPace || null,
+          avgPaceSec,
+          avgHr: form.avgHr ? parseInt(form.avgHr) : null,
+          maxHr: form.maxHr ? parseInt(form.maxHr) : null,
+          elevation: form.elevation ? parseInt(form.elevation) : null,
+          cadence: form.cadence ? parseInt(form.cadence) : null,
+          calories: form.calories ? parseInt(form.calories) : null,
+          weather: form.weather || null,
+          temperature: form.temperature ? parseFloat(form.temperature) : null,
+          rpe: form.rpe,
+          feeling: form.feeling,
+          feelingNote: form.feelingNote || null,
+          notes: form.notes || null,
+          shoeId: form.shoeId || null,
+          imageDataUrl: imagePreview || null,
+          rawExtract: extracted ? JSON.stringify(extracted) : null,
+          source: 'manual',
+        }
+        const res = await fetch('/api/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const data = await res.json()
+        if (data.error) throw new Error(data.error)
+        toast({ title: '✅ 已补录训练', description: `${logDate} · ${form.distance || 0}km` })
+        setExtracted(null)
+        setImagePreview(null)
+        setImageBase64(null)
+        refresh()
+      } catch (e) {
+        toast({ title: '补录失败', description: (e as Error).message, variant: 'destructive' })
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
     if (!currentSession) {
       toast({ title: '请选择训练课', variant: 'destructive' })
       return
@@ -243,17 +307,40 @@ export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, 
     }
   }
 
-  if (!week || sessions.length === 0) {
+  if ((!week || sessions.length === 0) && mode !== 'log') {
     return (
       <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-12 text-center">
         <Upload className="mx-auto h-10 w-10 text-slate-300 mb-3" />
         <p className="text-slate-500">暂无课表可上传数据</p>
+        <p className="text-xs text-slate-400 mt-1">可切换到「补录历史训练」模式，按日期记录前些日子的实跑数据</p>
       </div>
     )
   }
 
   return (
     <div className="space-y-5">
+      {/* 上传模式切换 */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant={mode === 'session' ? 'default' : 'outline'} onClick={() => setMode('session')} className={mode === 'session' ? 'bg-emerald-600 hover:bg-emerald-700' : 'border-slate-200 text-slate-600'}>
+            <Activity className="h-3.5 w-3.5 mr-1" />绑定本周训练课
+          </Button>
+          <Button size="sm" variant={mode === 'log' ? 'default' : 'outline'} onClick={() => setMode('log')} className={mode === 'log' ? 'bg-emerald-600 hover:bg-emerald-700' : 'border-slate-200 text-slate-600'}>
+            <Calendar className="h-3.5 w-3.5 mr-1" />补录历史训练
+          </Button>
+        </div>
+        {mode === 'log' && (
+          <div className="mt-3 grid sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs text-slate-500 mb-1.5 block">训练日期</Label>
+              <Input type="date" value={logDate} onChange={e => setLogDate(e.target.value)} />
+            </div>
+            <p className="sm:pt-5 text-xs text-slate-400 leading-relaxed">记录前些日子的实跑数据，AI 生成课表时会参考这些历史训练。</p>
+          </div>
+        )}
+      </div>
+
+      {mode === 'session' && (<>
       {/* 课表选择 */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <Label className="text-xs text-slate-500 mb-1.5 block">选择训练课</Label>
@@ -285,6 +372,7 @@ export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, 
           </div>
         )}
       </div>
+      </>)}
 
       <div className="grid gap-5 lg:grid-cols-5">
         {/* 左侧：上传 + 识别 */}
@@ -561,7 +649,7 @@ export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, 
             disabled={saving}
             className="w-full h-11 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-base font-medium"
           >
-            {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />保存中...</> : <><Save className="h-4 w-4 mr-1.5" />保存完成记录</>}
+            {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />保存中...</> : <><Save className="h-4 w-4 mr-1.5" />{mode === 'log' ? '保存补录记录' : '保存完成记录'}</>}
           </Button>
         </div>
       </div>

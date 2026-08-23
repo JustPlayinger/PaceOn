@@ -129,7 +129,7 @@ src/
 │   ├── pace-calculator.ts      # 配速计算（Riegel 公式）
 │   └── warmup-cooldown.ts      # 热身冷身方案生成
 └── prisma/
-    └── schema.prisma           # 9 个数据模型
+    └── schema.prisma           # 10 个数据模型
 ```
 
 ## 🗄 数据模型

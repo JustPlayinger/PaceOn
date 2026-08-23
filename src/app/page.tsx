@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Footprints, CalendarDays, Upload, BrainCircuit, History, UserCog, Sparkles, RefreshCw, TrendingUp, Activity, Heart, Mountain, Cloud, Flame, Timer, Gauge, LineChart as LineChartIcon, Pencil, Plus, CalendarRange, Target, Download, Printer, Copy, Library, HeartPulse, Database, Calculator, Trophy, Shield, GitCompare, Award } from 'lucide-react'
+import { Footprints, CalendarDays, Upload, BrainCircuit, History, UserCog, Sparkles, RefreshCw, TrendingUp, Activity, Heart, Mountain, Cloud, Flame, Timer, Gauge, LineChart as LineChartIcon, Pencil, Plus, CalendarRange, Target, Download, Printer, Copy, Library, HeartPulse, Database, Calculator, Trophy, Shield, GitCompare, Award, LayoutGrid, CalendarPlus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Toaster } from '@/components/ui/toaster'
@@ -45,7 +45,7 @@ if (typeof window !== 'undefined') {
   }
 }
 
-type Tab = 'dashboard' | 'upload' | 'review' | 'trends' | 'load' | 'compare' | 'calendar' | 'goal' | 'templates' | 'shoes' | 'recovery' | 'records' | 'pace' | 'achievements' | 'history' | 'profile' | 'data'
+type Tab = 'dashboard' | 'upload' | 'review' | 'trends' | 'load' | 'compare' | 'calendar' | 'goal' | 'templates' | 'shoes' | 'recovery' | 'records' | 'pace' | 'achievements' | 'history' | 'profile' | 'data' | 'more'
 
 // ===== 主组件 =====
 export default function Home() {
@@ -56,6 +56,7 @@ export default function Home() {
   const [currentWeek, setCurrentWeek] = useState<Week | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [uploadLogDate, setUploadLogDate] = useState<string | null>(null)
   const { toast } = useToast()
 
   const loadRunner = useCallback(async () => {
@@ -195,13 +196,13 @@ export default function Home() {
           </div>
         ) : (
           <>
-            {tab === 'dashboard' && <DashboardView week={currentWeek} runner={runner} onUploadClick={(sid) => { setSelectedSessionId(sid); setTab('upload') }} refresh={refresh} />}
-            {tab === 'upload' && <UploadView week={currentWeek} selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} refresh={refresh} />}
+            {tab === 'dashboard' && <DashboardView week={currentWeek} runner={runner} onUploadClick={(sid) => { setSelectedSessionId(sid); setTab('upload') }} onOpenTemplates={() => setTab('templates')} onOpenReview={() => setTab('review')} refresh={refresh} />}
+            {tab === 'upload' && <UploadView week={currentWeek} selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} refresh={refresh} logDate={uploadLogDate} />}
             {tab === 'review' && <ReviewView week={currentWeek} runner={runner} refresh={refresh} />}
             {tab === 'trends' && <TrendsView />}
             {tab === 'load' && <LoadView />}
             {tab === 'compare' && <CompareView />}
-            {tab === 'calendar' && <CalendarView />}
+            {tab === 'calendar' && <CalendarView onAddLog={(date) => { setUploadLogDate(date); setTab('upload') }} />}
             {tab === 'goal' && <GoalView />}
             {tab === 'templates' && <TemplatesView onApplied={refresh} />}
             {tab === 'shoes' && <ShoesView />}
@@ -212,6 +213,7 @@ export default function Home() {
             {tab === 'history' && <HistoryView weeks={weeks} plans={plans} onSelectWeek={setCurrentWeek} onSwitchToReview={() => setTab('review')} onChanged={refresh} />}
             {tab === 'profile' && <ProfileView runner={runner} refresh={refresh} />}
             {tab === 'data' && <DataView onDataChanged={refresh} />}
+            {tab === 'more' && <MoreView onNavigate={setTab} />}
           </>
         )}
       </main>
@@ -234,7 +236,7 @@ export default function Home() {
           <MobileTabButton active={tab === 'upload'} onClick={() => setTab('upload')} icon={<Upload className="h-5 w-5" />} label="上传" />
           <MobileTabButton active={tab === 'review'} onClick={() => setTab('review')} icon={<BrainCircuit className="h-5 w-5" />} label="AI" />
           <MobileTabButton active={tab === 'load'} onClick={() => setTab('load')} icon={<Shield className="h-5 w-5" />} label="负荷" />
-          <MobileTabButton active={tab === 'more'} onClick={() => setTab('history')} icon={<History className="h-5 w-5" />} label="更多" />
+          <MobileTabButton active={tab === 'more'} onClick={() => setTab('more')} icon={<LayoutGrid className="h-5 w-5" />} label="更多" />
         </div>
       </nav>
 
@@ -273,11 +275,53 @@ function MobileTabButton({ active, onClick, icon, label }: { active: boolean; on
   )
 }
 
+// ===== 更多功能菜单 =====
+function MoreView({ onNavigate }: { onNavigate: (tab: Tab) => void }) {
+  const items: { tab: Tab; label: string; icon: React.ReactNode }[] = [
+    { tab: 'templates', label: '计划模板', icon: <Library className="h-5 w-5" /> },
+    { tab: 'trends', label: '趋势分析', icon: <LineChartIcon className="h-5 w-5" /> },
+    { tab: 'calendar', label: '训练日历', icon: <CalendarRange className="h-5 w-5" /> },
+    { tab: 'goal', label: '目标进度', icon: <Target className="h-5 w-5" /> },
+    { tab: 'shoes', label: '跑鞋追踪', icon: <Footprints className="h-5 w-5" /> },
+    { tab: 'recovery', label: '恢复追踪', icon: <HeartPulse className="h-5 w-5" /> },
+    { tab: 'records', label: 'PB 记录', icon: <Trophy className="h-5 w-5" /> },
+    { tab: 'pace', label: '配速计算器', icon: <Calculator className="h-5 w-5" /> },
+    { tab: 'achievements', label: '成就', icon: <Award className="h-5 w-5" /> },
+    { tab: 'history', label: '历史归档', icon: <History className="h-5 w-5" /> },
+    { tab: 'profile', label: '跑者档案', icon: <UserCog className="h-5 w-5" /> },
+    { tab: 'data', label: '数据管理', icon: <Database className="h-5 w-5" /> },
+  ]
+  return (
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-emerald-50/40 p-5 shadow-sm">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <LayoutGrid className="h-5 w-5 text-emerald-600" />更多功能
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">全部功能入口，点击跳转</p>
+      </div>
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+        {items.map((item) => (
+          <button
+            key={item.tab}
+            onClick={() => onNavigate(item.tab)}
+            className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-4 transition-all hover:border-emerald-300 hover:shadow-md"
+          >
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">{item.icon}</span>
+            <span className="text-xs font-medium text-slate-700">{item.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ===== Dashboard 视图 =====
-function DashboardView({ week, runner, onUploadClick, refresh }: {
+function DashboardView({ week, runner, onUploadClick, onOpenTemplates, onOpenReview, refresh }: {
   week: Week | null
   runner: Runner | null
   onUploadClick: (sessionId: string) => void
+  onOpenTemplates: () => void
+  onOpenReview: () => void
   refresh: () => void
 }) {
   const { toast } = useToast()
@@ -314,7 +358,15 @@ function DashboardView({ week, runner, onUploadClick, refresh }: {
       <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-12 text-center">
         <CalendarDays className="mx-auto h-10 w-10 text-slate-300 mb-3" />
         <p className="text-slate-500">暂无本周课表</p>
-        <p className="text-xs text-slate-400 mt-1">请前往「AI 点评」生成下周课表，或在「跑者档案」填写信息后初始化</p>
+        <p className="text-xs text-slate-400 mt-1">创建你的第一份训练课表：</p>
+        <div className="mt-4 flex flex-col sm:flex-row justify-center gap-2">
+          <Button onClick={onOpenTemplates} className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700">
+            <Library className="h-4 w-4 mr-1.5" />从计划模板创建
+          </Button>
+          <Button variant="outline" onClick={onOpenReview} className="border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+            <BrainCircuit className="h-4 w-4 mr-1.5" />AI 对话生成
+          </Button>
+        </div>
       </div>
     )
   }
@@ -695,13 +747,14 @@ function FocusStat({ label, value, unit }: { label: string; value: string; unit:
 }
 
 // 占位组件 - 直接转发到独立视图实现
-function UploadView({ week, selectedSessionId, setSelectedSessionId, refresh }: {
+function UploadView({ week, selectedSessionId, setSelectedSessionId, refresh, logDate }: {
   week: Week | null
   selectedSessionId: string | null
   setSelectedSessionId: (id: string | null) => void
   refresh: () => void
+  logDate?: string | null
 }) {
-  return <UploadViewImpl week={week} selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} refresh={refresh} />
+  return <UploadViewImpl week={week} selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} refresh={refresh} logDate={logDate} />
 }
 
 function ReviewView({ week, runner, refresh }: { week: Week | null; runner: Runner | null; refresh: () => void }) {

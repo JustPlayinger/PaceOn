@@ -198,4 +198,34 @@ model PersonalRecord {
   updatedAt   DateTime @updatedAt
 }
 
+// 独立历史训练记录（补录，不绑定课表，只带日期）
+// 用于在日历页按天补录前些日子的训练，供 AI 生成课表参考。
+model TrainingLog {
+  id           String   @id @default(cuid())
+  date         DateTime @default(now()) // 训练发生日期
+  distance     Float?   // km
+  duration     Int?     // 秒
+  avgPace      String?  // "5:30/km"
+  avgPaceSec   Int?     // 秒/km
+  avgHr        Int?
+  maxHr        Int?
+  elevation    Int?     // 爬升 m
+  cadence      Int?     // 步频 spm
+  calories     Int?
+  weather      String?
+  temperature  Float?
+  rpe          Int?     // 1-10 主观疲劳
+  feeling      Int?     // 1-10 体感
+  feelingNote  String?
+  imageDataUrl String?  // 原始图片 base64
+  rawExtract   String?  // AI 原始提取 JSON
+  notes        String?
+  shoeId       String?  // 关联跑鞋
+  source       String   @default("manual") // manual / ocr
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([date])
+}
+
 

@@ -45,8 +45,9 @@ export async function GET(req: NextRequest) {
         avgHr: number | null
         duration: number | null
         intensity: string | null
-        weekId: string
-        sessionId: string
+        weekId: string | null
+        sessionId: string | null
+        source: string // plan | log
       }>
       totalDistance: number
       completedCount: number
@@ -79,11 +80,48 @@ export async function GET(req: NextRequest) {
           intensity: s.intensity,
           weekId: w.id,
           sessionId: s.id,
+          source: 'plan',
         })
         if (s.status === 'completed' && actual != null) {
           days[key].totalDistance += actual
           days[key].completedCount++
         }
+      }
+    }
+
+    // 合并独立历史训练记录（TrainingLog，补录数据）
+    const logs = await db.trainingLog.findMany({
+      where: { date: { gte: start, lte: end } },
+      orderBy: { date: 'asc' },
+    })
+    for (const log of logs) {
+      const d = new Date(log.date)
+      const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`
+      if (!days[key]) {
+        days[key] = {
+          date: key,
+          sessions: [],
+          totalDistance: 0,
+          completedCount: 0,
+        }
+      }
+      days[key].sessions.push({
+        id: log.id,
+        type: 'log',
+        status: 'completed',
+        plannedDistance: null,
+        actualDistance: log.distance ?? null,
+        avgPace: log.avgPace ?? null,
+        avgHr: log.avgHr ?? null,
+        duration: log.duration ?? null,
+        intensity: null,
+        weekId: null,
+        sessionId: null,
+        source: 'log',
+      })
+      if (log.distance != null) {
+        days[key].totalDistance += log.distance
+        days[key].completedCount++
       }
     }
 

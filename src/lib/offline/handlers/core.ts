@@ -1,7 +1,7 @@
 /**
  * 离线 API - 核心 CRUD handler（runner / weeks / sessions / shoes / recovery / records / templates / seed）
  */
-import { all, get, run, uid, nowIso } from '../db'
+import { all, get, run, uid, nowIso, insertLog, deleteLog, logsBetween, logsRecentDays, type TrainingLogRow } from '../db'
 import type { ApiRequest, Handler } from '../types'
 import { TRAINING_TEMPLATES } from '@/lib/templates'
 
@@ -391,6 +391,65 @@ const planDetailHandler: Handler = async (req) => {
   return methodErr(req.method)
 }
 
+// ---------- 独立历史训练记录（TrainingLog） ----------
+
+const logHandler: Handler = async (req) => {
+  if (req.method === 'GET') {
+    const from = req.query.get('from')
+    const to = req.query.get('to')
+    const recent = req.query.get('recent')
+    let logs: TrainingLogRow[]
+    if (from || to) {
+      logs = logsBetween(
+        from ? new Date(from) : new Date(0),
+        to ? new Date(to) : new Date(8640000000000000),
+      )
+    } else if (recent) {
+      logs = logsRecentDays(Math.max(1, parseInt(recent) || 14))
+    } else {
+      logs = all<TrainingLogRow>('SELECT * FROM TrainingLog ORDER BY date ASC')
+    }
+    return json({ logs })
+  }
+  if (req.method === 'POST') {
+    const b = (req.body || {}) as Record<string, unknown>
+    if (!b.date) return json({ error: '缺少日期 date' }, 400)
+    const log = insertLog({
+      date: new Date(String(b.date)).toISOString(),
+      distance: typeof b.distance === 'number' ? b.distance : null,
+      duration: typeof b.duration === 'number' ? b.duration : null,
+      avgPace: typeof b.avgPace === 'string' ? b.avgPace : null,
+      avgPaceSec: typeof b.avgPaceSec === 'number' ? b.avgPaceSec : null,
+      avgHr: typeof b.avgHr === 'number' ? b.avgHr : null,
+      maxHr: typeof b.maxHr === 'number' ? b.maxHr : null,
+      elevation: typeof b.elevation === 'number' ? b.elevation : null,
+      cadence: typeof b.cadence === 'number' ? b.cadence : null,
+      calories: typeof b.calories === 'number' ? b.calories : null,
+      weather: typeof b.weather === 'string' ? b.weather : null,
+      temperature: typeof b.temperature === 'number' ? b.temperature : null,
+      rpe: typeof b.rpe === 'number' ? b.rpe : null,
+      feeling: typeof b.feeling === 'number' ? b.feeling : null,
+      feelingNote: typeof b.feelingNote === 'string' ? b.feelingNote : null,
+      imageDataUrl: typeof b.imageDataUrl === 'string' ? b.imageDataUrl : null,
+      rawExtract: typeof b.rawExtract === 'string' ? b.rawExtract : null,
+      notes: typeof b.notes === 'string' ? b.notes : null,
+      shoeId: typeof b.shoeId === 'string' ? b.shoeId : null,
+      source: typeof b.source === 'string' ? b.source : 'manual',
+    })
+    return json({ log })
+  }
+  return methodErr(req.method)
+}
+
+const logDetailHandler: Handler = async (req) => {
+  const id = req.params.id
+  if (req.method === 'DELETE') {
+    deleteLog(id)
+    return json({ success: true })
+  }
+  return methodErr(req.method)
+}
+
 export function registerCoreHandlers(map: Map<string, Handler>): void {
   map.set('GET /api/runner', runnerHandler)
   map.set('POST /api/runner', runnerHandler)
@@ -399,6 +458,9 @@ export function registerCoreHandlers(map: Map<string, Handler>): void {
   map.set('GET /api/templates', templatesHandler)
   map.set('POST /api/templates', templatesApplyHandler)
   map.set('POST /api/seed', seedHandler)
+  map.set('GET /api/log', logHandler)
+  map.set('POST /api/log', logHandler)
+  map.set('DELETE /api/log/[id]', logDetailHandler)
   map.set('GET /api/plans', plansHandler)
   map.set('POST /api/plans', plansHandler)
   map.set('GET /api/plans/[id]', planDetailHandler)

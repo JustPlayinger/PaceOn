@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { chatWithCoach, generatePlanFromChat, type ChatMessage, type RunnerProfile, type SessionForReview } from '@/lib/ai'
+import { chatWithCoach, generatePlanFromChat, type ChatMessage, type RunnerProfile, type SessionForReview, type RecentTrainingLog } from '@/lib/ai'
 import { nextMondayOf, findWeekStartingOn, getOrCreateActivePlan } from '@/lib/plan-utils'
 
 // 对话式课表生成
@@ -28,6 +28,22 @@ export async function POST(req: NextRequest) {
       weeklyMileage: runner.weeklyMileage,
       notes: runner.notes,
     } : null
+
+    // 近期实际训练记录（补录历史），供 AI 参考跑者当前状态
+    const recentLogs: RecentTrainingLog[] = (await db.trainingLog.findMany({
+      where: { date: { gte: new Date(Date.now() - 13 * 86400000) } },
+      orderBy: { date: 'asc' },
+    })).map((l) => ({
+      date: l.date.toISOString().slice(0, 10),
+      distance: l.distance,
+      duration: l.duration,
+      avgPace: l.avgPace,
+      avgHr: l.avgHr,
+      elevation: l.elevation,
+      rpe: l.rpe,
+      feeling: l.feeling,
+      notes: l.notes,
+    }))
 
     if (action === 'chat') {
       // 对话模式
@@ -109,7 +125,7 @@ export async function POST(req: NextRequest) {
         weekNumber = (maxNum._max.weekNumber ?? 0) + 1
       }
 
-      const plan = await generatePlanFromChat(runnerProfile, history || [], lastWeekSessions, lastReview)
+      const plan = await generatePlanFromChat(runnerProfile, history || [], lastWeekSessions, lastReview, recentLogs)
 
       // 创建下周（归入当前启用计划）
       const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)

@@ -7,6 +7,8 @@ export interface RunnerProfile { name: string; age?: number | null; gender?: str
 export interface SessionForReview { date: string; dayOfWeek: number; type: string; plannedDistance?: number | null; plannedDuration?: number | null; plannedPace?: string | null; intensity?: string | null; description?: string | null; status: string; completion?: Record<string, unknown> | null }
 export interface PlannedSession { dayOfWeek: number; type: string; plannedDistance: number | null; plannedDuration: number | null; plannedPace: string | null; intensity: string | null; description: string }
 export interface PlanResult { weekGoal: string; phase: string; sessions: PlannedSession[]; summary: string }
+/** 独立历史训练记录（补录）的 AI 输入结构 */
+export interface RecentTrainingLog { date: string; distance: number | null; duration: number | null; avgPace: string | null; avgHr: number | null; elevation: number | null; rpe: number | null; feeling: number | null; notes: string | null }
 export interface ReviewResult { rating: number; content: string; suggestions: { type: string; text: string }[] }
 export interface ChatMessage { role: 'user' | 'assistant'; content: string }
 
@@ -156,7 +158,7 @@ const PLAN_PROMPT = `要求：
   ]
 }`
 
-export async function generateNextWeekPlan(runner: RunnerProfile, lastWeekSessions: SessionForReview[], lastReview: string | null, weekNumber: number): Promise<PlanResult> {
+export async function generateNextWeekPlan(runner: RunnerProfile, lastWeekSessions: SessionForReview[], lastReview: string | null, weekNumber: number, recentLogs: RecentTrainingLog[] = []): Promise<PlanResult> {
   const userPrompt = `请为以下跑者生成第 ${weekNumber} 周的训练课表。
 
 == 跑者档案 ==
@@ -165,15 +167,21 @@ ${JSON.stringify(runner, null, 2)}
 == 上周训练完成情况 ==
 ${JSON.stringify(lastWeekSessions, null, 2)}
 
+== 近期实际训练记录（补录/历史实跑，含日期） ==
+${recentLogs.length > 0 ? JSON.stringify(recentLogs, null, 2) : '无'}
+
 == 上周 AI 点评 ==
 ${lastReview || '无'}
 
-${PLAN_PROMPT}`
+${PLAN_PROMPT}
+
+补充要求：结合"近期实际训练记录"评估跑者当前状态与疲劳，若近期跑量偏高或体感差适当降低下周强度与跑量，训练不足则从合理强度起步。`
   try { return parsePlanResult(await callDeepseekApi(userPrompt)) }
   catch {
     const lastDistance = lastWeekSessions.reduce((sum, s) => sum + (typeof s.completion?.distance === 'number' ? s.completion.distance : 0), 0)
+    const logDistance = recentLogs.reduce((sum, l) => sum + (l.distance || 0), 0)
     const baseMileage = runner.weeklyMileage ?? 40
-    const totalMileage = Math.max(30, Math.round((lastDistance || baseMileage) * 1.05))
+    const totalMileage = Math.max(30, Math.round(((lastDistance || logDistance) || baseMileage) * 1.05))
     const phase = weekNumber >= 4 ? 'build' : weekNumber >= 8 ? 'peak' : weekNumber >= 10 ? 'taper' : 'base'
     return buildPlan(runner, totalMileage, phase, weekNumber, lastReview ?? undefined)
   }
@@ -246,12 +254,13 @@ export async function chatWithCoach(runner: RunnerProfile | null, history: ChatM
     return { reply: '⚠️ 网络或服务异常，对话未完成，请稍后重试。', ready: false, questions: [] }
   }
 }
-export async function generatePlanFromChat(runner: RunnerProfile | null, chatHistory: ChatMessage[], lastWeekSessions?: SessionForReview[], lastReview?: string | null): Promise<PlanResult> {
+export async function generatePlanFromChat(runner: RunnerProfile | null, chatHistory: ChatMessage[], lastWeekSessions?: SessionForReview[], lastReview?: string | null, recentLogs: RecentTrainingLog[] = []): Promise<PlanResult> {
   const conversationSummary = chatHistory.map((m) => `${m.role === 'user' ? '跑者' : '教练'}：${m.content}`).join('\n')
   const runnerInfo = runner ? `跑者档案：${JSON.stringify(runner, null, 2)}` : '无跑者档案'
   const lastWeekInfo = lastWeekSessions && lastWeekSessions.length > 0 ? `上周训练完成情况：${JSON.stringify(lastWeekSessions, null, 2)}` : '无上周训练数据（这是初始课表）'
+  const recentLogsInfo = recentLogs.length > 0 ? `近期实际训练记录（补录/历史实跑，含日期）：${JSON.stringify(recentLogs, null, 2)}` : '无近期实际训练记录'
   const reviewInfo = lastReview ? `上周 AI 点评：${lastReview}` : '无上周点评'
-  const userPrompt = `${runnerInfo}\n\n== 对话记录（含跑者提供的实际情况：身体状态、伤病、目标、周跑量、每周可训练天数、训练偏好、特殊环境等）==\n${conversationSummary}\n\n== 上周训练数据 ==\n${lastWeekInfo}\n${reviewInfo}\n\n请基于以上所有信息（以对话中跑者的实际情况为准）生成下周训练课表，要求：\n1. 一周 7 天全部列出，dayOfWeek: 1=周一 ... 6=周六, 0=周日\n2. 训练天数/频率与跑者可训练天数一致，其余为 rest 或 cross\n3. 周跑量循序渐进：若跑者给出周跑量则以其为基准，未给出则按"当前水平合理估算"，绝不超量\n4. 若有伤病/刚恢复：大幅降低强度与跑量，多安排 recovery，必要时以 cross 代替跑步\n5. 若跑者是新手/目标明确（如 sub4 全马）：课表要匹配其水平和目标，配速合理、可执行\n6. 结合跑者偏好：喜欢的训练类型（间歇/节奏/长距离）可侧重，抵触的减少\n7. 每节课给出明确的训练内容描述（距离/配速/组数/强度）\n8. weekGoal 一句话概括本周重点，体现跑者的特殊情况（如"膝伤恢复期，低强度稳步提升"）\n9. 力量训练：若跑者需要或安排 cross 课时，description 中写明具体力量动作（如深蹲/弓步蹲/硬拉/核心/臀腿等）与组数次数\n\n请严格按以下 JSON 格式返回（不要输出 JSON 之外的内容）：\n{"weekGoal": "...", "phase": "base|build|peak|taper|recovery", "summary": "...", "sessions": [{"dayOfWeek": 0-7, "type": "easy|tempo|interval|long|recovery|rest|cross", "plannedDistance": 数字或null, "plannedDuration": 数字或null, "plannedPace": "5:30/km" 或 null, "intensity": "Z1-Z5|rest", "description": "..."}]}`
+  const userPrompt = `${runnerInfo}\n\n== 对话记录（含跑者提供的实际情况：身体状态、伤病、目标、周跑量、每周可训练天数、训练偏好、特殊环境等）==\n${conversationSummary}\n\n== 上周训练数据 ==\n${lastWeekInfo}\n${recentLogsInfo}\n${reviewInfo}\n\n请基于以上所有信息（以对话中跑者的实际情况为准）生成下周训练课表，要求：\n1. 一周 7 天全部列出，dayOfWeek: 1=周一 ... 6=周六, 0=周日\n2. 训练天数/频率与跑者可训练天数一致，其余为 rest 或 cross\n3. 周跑量循序渐进：若跑者给出周跑量则以其为基准，未给出则按"当前水平合理估算"，绝不超量\n4. 若有伤病/刚恢复：大幅降低强度与跑量，多安排 recovery，必要时以 cross 代替跑步\n5. 若跑者是新手/目标明确（如 sub4 全马）：课表要匹配其水平和目标，配速合理、可执行\n6. 结合跑者偏好：喜欢的训练类型（间歇/节奏/长距离）可侧重，抵触的减少\n7. 每节课给出明确的训练内容描述（距离/配速/组数/强度）\n8. weekGoal 一句话概括本周重点，体现跑者的特殊情况（如"膝伤恢复期，低强度稳步提升"）\n9. 力量训练：若跑者需要或安排 cross 课时，description 中写明具体力量动作（如深蹲/弓步蹲/硬拉/核心/臀腿等）与组数次数\n10. 结合"近期实际训练记录"评估跑者当前状态与疲劳：近期跑量偏高或体感差则降低强度，训练不足则从合理强度起步\n\n请严格按以下 JSON 格式返回（不要输出 JSON 之外的内容）：\n{"weekGoal": "...", "phase": "base|build|peak|taper|recovery", "summary": "...", "sessions": [{"dayOfWeek": 0-7, "type": "easy|tempo|interval|long|recovery|rest|cross", "plannedDistance": 数字或null, "plannedDuration": 数字或null, "plannedPace": "5:30/km" 或 null, "intensity": "Z1-Z5|rest", "description": "..."}]}`
   try { return parsePlanResult(await callDeepseekApi(userPrompt)) }
   catch { return buildPlan(runner || { name: '跑者' }, runner?.weeklyMileage ?? 40, 'base', 1) }
 }

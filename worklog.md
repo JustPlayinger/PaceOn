@@ -882,6 +882,38 @@ Stage Summary:
   - VLM 评价日历："极高的产品完成度和专业感"
 - ESLint 通过（0 error 0 warning）
 
+## 2026-08-23 · 独立历史训练记录 TrainingLog + 创建课表入口 + 修复移动端「更多」导航
+### 背景（用户反馈）
+- 用户反馈 v1.1.0「没有创建课表的页面」，并希望：既能选模板、又能 AI 对话生成课表；能在日历页方便地上传/批量补录前些日子的训练数据（明确日期），AI 据此生成课表。
+
+### 改动
+- 数据层：新增独立 TrainingLog 表（在线 Prisma model + 离线 SQLite DDL，migrateSchema 幂等建表）
+  - 不绑定课表、只带日期；字段：date/distance/duration/avgPace/avgPaceSec/avgHr/maxHr/elevation/cadence/calories/weather/temperature/rpe/feeling/feelingNote/imageDataUrl/rawExtract/notes/shoeId/source
+  - offline/db.ts 新增 logsBetween / logsRecentDays / insertLog / deleteLog 辅助
+- API 双端：
+  - 在线：新增 /api/log（GET ?from/to/recent、POST）、/api/log/[id]（DELETE）
+  - 离线：handlers/core.ts 新增 logHandler/logDetailHandler，registerCoreHandlers 注册 GET/POST /api/log、DELETE /api/log/[id]
+- 日历：
+  - 在线 /api/calendar 与离线 compute.ts calendarHandler 合并 TrainingLog（source='log'，计入 totalDistance/completedCount/monthStats）
+  - 日历详情面板：新增「补录该日训练」按钮（跳转上传并预填日期）；补录记录紫色标识 + 可删除；无训练记录的日期也显示补录入口
+- 上传：
+  - upload-view 新增两种模式：绑定本周训练课 / 补录历史训练（指定日期，默认今天或由日历带入日期）
+  - 补录模式保存走 POST /api/log（复用 OCR 提取 / 自动填表）
+- AI 生成课表参考历史训练：
+  - lib/ai.ts 与 lib/offline/ai.ts 的 generateNextWeekPlan / generatePlanFromChat 新增 recentLogs 参数，prompt 注入「近期实际训练记录（含日期）」，要求据此评估疲劳与强度
+  - 在线 plan/chat-plan route、离线 planHandler/chatPlanHandler 读取最近 14 天 TrainingLog 传入
+- 创建课表入口 + 导航：
+  - 修复移动端底部「更多」按钮 bug（原 onClick 直接 setTab('history')，导致进不了其他功能）→ 新增 'more' Tab + MoreView 网格菜单（计划模板/趋势/日历/目标/跑鞋/恢复/PB/配速/成就/历史/档案/数据）
+  - DashboardView 空状态（无本周课表）新增「从计划模板创建」「AI 对话生成」两个醒目按钮
+
+### 验证
+- prisma generate / db:push 通过；next build 通过（/api/log 与 /api/log/[id] 已生成）
+- 在线冒烟：POST /api/log 创建 → GET /api/log?recent=30 查询 → GET /api/calendar 合并显示 source='log' 记录（totalDistance 计入）→ DELETE /api/log/[id] 删除，全部通过
+- tsc 全量检查未引入新的类型错误（项目存在既有类型警告，构建本就跳过类型校验）
+
+### 说明
+- 补录历史训练目前接入：日历展示 + AI 生成课表上下文；统计/负荷/趋势等视图尚未纳入 TrainingLog（可后续扩展）
+
 ## 未解决问题 / 风险
 - VLM 识别精度依赖于上传图片的清晰度与数据可读性
 - SQLite 单文件数据库，适合个人使用

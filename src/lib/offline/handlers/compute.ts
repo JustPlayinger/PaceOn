@@ -1,7 +1,7 @@
 /**
  * 离线 API - 统计计算 handler（stats / load / calendar / goal / achievements / search / compare / config）
  */
-import { all, get } from '../db'
+import { all, get, logsBetween } from '../db'
 import type { ApiRequest, Handler } from '../types'
 import { json, methodErr } from './core'
 
@@ -111,8 +111,16 @@ const calendarHandler: Handler = async (req) => {
     if (!days[key]) days[key] = { date: key, sessions: [], totalDistance: 0, completedCount: 0 }
     const c = get('SELECT * FROM TrainingCompletion WHERE sessionId = ?', [s.id])
     const actual = c?.distance ?? null
-    days[key].sessions.push({ id: s.id, type: s.type, status: s.status, plannedDistance: s.plannedDistance, actualDistance: actual, avgPace: c?.avgPace ?? null, avgHr: c?.avgHr ?? null, duration: c?.duration ?? null, intensity: s.intensity, weekId: w.id, sessionId: s.id })
+    days[key].sessions.push({ id: s.id, type: s.type, status: s.status, plannedDistance: s.plannedDistance, actualDistance: actual, avgPace: c?.avgPace ?? null, avgHr: c?.avgHr ?? null, duration: c?.duration ?? null, intensity: s.intensity, weekId: w.id, sessionId: s.id, source: 'plan' })
     if (s.status === 'completed' && actual != null) { days[key].totalDistance += actual as number; days[key].completedCount++ }
+  }
+  // 合并独立历史训练记录（TrainingLog，补录数据）
+  for (const log of logsBetween(start, end)) {
+    const d = new Date(log.date)
+    const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`
+    if (!days[key]) days[key] = { date: key, sessions: [], totalDistance: 0, completedCount: 0 }
+    days[key].sessions.push({ id: log.id, type: 'log', status: 'completed', plannedDistance: null, actualDistance: log.distance ?? null, avgPace: log.avgPace ?? null, avgHr: log.avgHr ?? null, duration: log.duration ?? null, intensity: null, weekId: null, sessionId: null, source: 'log' })
+    if (log.distance != null) { days[key].totalDistance += log.distance; days[key].completedCount++ }
   }
   const allDays = Object.values(days)
   const monthStats = { totalDistance: Math.round(allDays.reduce((s, d) => s + d.totalDistance, 0) * 10) / 10, totalRuns: allDays.reduce((s, d) => s + d.completedCount, 0), activeDays: allDays.filter((d) => d.completedCount > 0).length, totalDaysInMonth: new Date(year, month + 1, 0).getDate(), longestRun: Math.max(0, ...allDays.flatMap((d) => d.sessions.filter((s: { actualDistance: number | null }) => s.actualDistance != null).map((s: { actualDistance: number }) => s.actualDistance as number))) }

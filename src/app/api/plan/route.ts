@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { generateNextWeekPlan, generateInitialPlan, type SessionForReview, type RunnerProfile } from '@/lib/ai'
+import { generateNextWeekPlan, generateInitialPlan, type SessionForReview, type RunnerProfile, type RecentTrainingLog } from '@/lib/ai'
 import { nextMondayOf, findWeekStartingOn, getOrCreateActivePlan } from '@/lib/plan-utils'
 
 // 生成下周课表
@@ -27,6 +27,22 @@ export async function POST(req: NextRequest) {
       weeklyMileage: runner.weeklyMileage,
       notes: runner.notes,
     }
+
+    // 近期实际训练记录（补录历史），供 AI 参考跑者当前状态
+    const recentLogs: RecentTrainingLog[] = (await db.trainingLog.findMany({
+      where: { date: { gte: new Date(Date.now() - 13 * 86400000) } },
+      orderBy: { date: 'asc' },
+    })).map((l) => ({
+      date: l.date.toISOString().slice(0, 10),
+      distance: l.distance,
+      duration: l.duration,
+      avgPace: l.avgPace,
+      avgHr: l.avgHr,
+      elevation: l.elevation,
+      rpe: l.rpe,
+      feeling: l.feeling,
+      notes: l.notes,
+    }))
 
     // 计算下周
     const nextMonday = nextMondayOf()
@@ -91,7 +107,7 @@ export async function POST(req: NextRequest) {
               }
             : null,
         }))
-        plan = await generateNextWeekPlan(runnerProfile, lastWeekSessions, lastReview, weekNumber)
+        plan = await generateNextWeekPlan(runnerProfile, lastWeekSessions, lastReview, weekNumber, recentLogs)
       }
     }
 

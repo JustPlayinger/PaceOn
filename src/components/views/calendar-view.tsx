@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Calendar, ChevronLeft, ChevronRight, TrendingUp, Activity, Flame, Mountain, Loader2, Footprints } from 'lucide-react'
+import { Calendar, ChevronLeft, ChevronRight, TrendingUp, Activity, Flame, Mountain, Loader2, Footprints, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
@@ -17,8 +17,9 @@ interface DaySession {
   avgHr: number | null
   duration: number | null
   intensity: string | null
-  weekId: string
-  sessionId: string
+  weekId: string | null
+  sessionId: string | null
+  source: string
 }
 
 interface DayData {
@@ -67,7 +68,7 @@ function getDayColor(day: DayData | undefined): { bg: string; border: string; te
   return { bg: 'bg-emerald-200', border: 'border-emerald-300', text: 'text-emerald-800' }
 }
 
-export function CalendarView() {
+export function CalendarView({ onAddLog }: { onAddLog?: (date: string) => void }) {
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
@@ -243,7 +244,7 @@ export function CalendarView() {
       </div>
 
       {/* 选中日期详情 */}
-      {selectedDay && data?.days[selectedDay] && (
+      {selectedDay && (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-slate-800 flex items-center gap-2">
@@ -252,27 +253,40 @@ export function CalendarView() {
             </h3>
             <Button variant="ghost" size="sm" onClick={() => setSelectedDay(null)} className="h-7 text-xs">×</Button>
           </div>
+
+          <Button
+            size="sm"
+            onClick={() => onAddLog?.(selectedDay)}
+            className="mb-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 h-9"
+          >
+            <Plus className="h-4 w-4 mr-1" />补录该日训练
+          </Button>
+
           <div className="space-y-2">
-            {data.days[selectedDay].sessions.map((s) => {
+            {(data?.days[selectedDay]?.sessions || []).map((s) => {
+              const isLog = s.source === 'log'
               const cfg = SESSION_TYPES[s.type] || SESSION_TYPES.easy
               return (
-                <div key={s.id} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <div key={s.id} className={`flex items-center gap-3 p-3 rounded-xl border ${isLog ? 'bg-violet-50 border-violet-100' : 'bg-slate-50 border-slate-100'}`}>
                   <div className={`flex h-10 w-10 items-center justify-center rounded-lg text-lg ${cfg.bg} border`}>
                     {cfg.icon}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</span>
-                      <Badge variant="outline" className={`text-[10px] ${s.status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                        {s.status === 'completed' ? '✓ 已完成' : '待完成'}
-                      </Badge>
+                      <span className={`text-sm font-medium ${cfg.color}`}>{isLog ? '历史训练' : cfg.label}</span>
+                      {isLog && <Badge variant="outline" className="text-[10px] bg-violet-50 text-violet-700 border-violet-200">补录</Badge>}
+                      {!isLog && (
+                        <Badge variant="outline" className={`text-[10px] ${s.status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                          {s.status === 'completed' ? '✓ 已完成' : '待完成'}
+                        </Badge>
+                      )}
                       {s.intensity && s.intensity !== 'rest' && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">{s.intensity}</span>
                       )}
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-xs text-slate-600">
                       {s.actualDistance != null ? (
-                        <span className="font-medium text-emerald-700">实际 {s.actualDistance}km</span>
+                        <span className="font-medium text-emerald-700">{isLog ? '实跑' : '实际'} {s.actualDistance}km</span>
                       ) : s.plannedDistance != null ? (
                         <span>计划 {s.plannedDistance}km</span>
                       ) : null}
@@ -281,9 +295,19 @@ export function CalendarView() {
                       {s.duration && <span>· {Math.round(s.duration / 60)}min</span>}
                     </div>
                   </div>
+                  {isLog && (
+                    <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400 hover:text-rose-500 shrink-0" onClick={async () => {
+                      if (!confirm('删除这条补录记录？')) return
+                      await fetch(`/api/log/${s.id}`, { method: 'DELETE' })
+                      loadCalendar()
+                    }}>删除</Button>
+                  )}
                 </div>
               )
             })}
+            {!data?.days[selectedDay]?.sessions.length && (
+              <div className="text-center text-xs text-slate-400 py-4">该日暂无训练记录，可点击上方按钮补录</div>
+            )}
           </div>
         </div>
       )}
