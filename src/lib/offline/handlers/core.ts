@@ -18,10 +18,58 @@ function weeksAll(): Record<string, unknown>[] {
   return all('SELECT * FROM TrainingWeek ORDER BY weekStart DESC').map((w) => ({ ...w, sessions: sessionsOf(w.id as string) }))
 }
 
-function weekFull(id: string): Record<string, unknown> | null {
+export function weekFull(id: string): Record<string, unknown> | null {
   const w = get('SELECT * FROM TrainingWeek WHERE id = ?', [id])
   if (!w) return null
   return { ...w, sessions: sessionsOf(id), reviews: all('SELECT * FROM AIReview WHERE weekId = ? ORDER BY createdAt DESC', [id]) }
+}
+
+/** 删除一个训练周（含其训练课、完成记录、点评） */
+function deleteWeek(id: string): void {
+  run('DELETE FROM TrainingCompletion WHERE sessionId IN (SELECT id FROM TrainingSession WHERE weekId = ?)', [id])
+  run('DELETE FROM TrainingSession WHERE weekId = ?', [id])
+  run('DELETE FROM AIReview WHERE weekId = ?', [id])
+  run('DELETE FROM TrainingWeek WHERE id = ?', [id])
+}
+
+// ---------- 训练周期（计划）辅助 ----------
+
+export function thisMondayOf(): Date {
+  const today = new Date()
+  const day = today.getDay()
+  const monday = new Date(today)
+  const diff = day === 0 ? -6 : 1 - day
+  monday.setDate(today.getDate() + diff)
+  monday.setHours(0, 0, 0, 0)
+  return monday
+}
+
+export function nextMondayOf(): Date {
+  const today = new Date()
+  const day = today.getDay()
+  const nextMonday = new Date(today)
+  const diff = day === 0 ? 1 : 8 - day
+  nextMonday.setDate(today.getDate() + diff)
+  nextMonday.setHours(0, 0, 0, 0)
+  return nextMonday
+}
+
+/** 按「周一日期」查找已存在的训练周（防重复创建的关键） */
+export function findWeekStartingOn(nextMonday: Date): Record<string, unknown> | null {
+  const start = new Date(nextMonday)
+  const end = new Date(start.getTime() + 86400000)
+  const rows = all('SELECT * FROM TrainingWeek WHERE weekStart >= ? AND weekStart < ? ORDER BY createdAt ASC LIMIT 1', [start.toISOString(), end.toISOString()])
+  return rows[0] || null
+}
+
+/** 获取当前启用计划；若不存在则把其它计划置为非启用后新建（全局仅一个 active=true） */
+export function getOrCreateActivePlan(): Record<string, unknown> {
+  const existing = get('SELECT * FROM TrainingPlan WHERE active = 1 ORDER BY createdAt ASC LIMIT 1')
+  if (existing) return existing
+  run('UPDATE TrainingPlan SET active = 0 WHERE active = 1')
+  const now = nowIso()
+  run('INSERT INTO TrainingPlan (id, title, goal, targetRace, active, startedAt, createdAt, updatedAt) VALUES (?,?,?,?,1,?,?,?)', [uid(), '我的训练计划', null, null, now, now, now])
+  return get('SELECT * FROM TrainingPlan WHERE active = 1 ORDER BY createdAt ASC LIMIT 1')!
 }
 
 function runnerProfile(): Record<string, unknown> | null {
@@ -55,12 +103,19 @@ const weeksHandler: Handler = async (req) => {
   if (req.method === 'GET') {
     const weeks = weeksAll()
     if (req.query.get('current') === 'true' && weeks.length > 0) {
-      const today = new Date()
-      const day = today.getDay()
-      const monday = new Date(today)
-      const diff = day === 0 ? -6 : 1 - day
-      monday.setDate(today.getDate() + diff)
-      monday.setHours(0, 0, 0, 0)
+      const monday = thisMondayOf()
+
+      // 优先返回「当前启用计划」中的当前周 / 最近一周
+      const activePlan = get('SELECT * FROM TrainingPlan WHERE active = 1 LIMIT 1')
+      if (activePlan) {
+        const planWeeks = weeks.filter((w) => w.planId === activePlan.id)
+        if (planWeeks.length > 0) {
+          const planCurrentWeek = planWeeks.find((w) => { const ws = new Date(w.weekStart as string); ws.setHours(0, 0, 0, 0); return ws.getTime() === monday.getTime() })
+          if (planCurrentWeek) return json({ week: planCurrentWeek })
+          return json({ week: planWeeks[0] })
+        }
+      }
+
       const currentWeek = weeks.find((w) => { const ws = new Date(w.weekStart as string); ws.setHours(0, 0, 0, 0); return ws.getTime() === monday.getTime() })
       return json({ week: currentWeek || weeks[0] })
     }
@@ -68,12 +123,17 @@ const weeksHandler: Handler = async (req) => {
   }
   if (req.method === 'POST') {
     const b = req.body || {}
+    const weekStart = new Date(b.weekStart)
 
-const weekStart = new Date(b.weekStart)
+    // 防重复：同一起始周一已有课表则直接复用
+    const existing = findWeekStartingOn(weekStart)
+    if (existing) return json({ week: weekFull(existing.id as string), reused: true })
+
     const weekEnd = new Date(b.weekEnd || new Date(weekStart.getTime() + 6 * 86400000))
     const id = uid()
     const now = nowIso()
-    run('INSERT INTO TrainingWeek (id, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)', [id, weekStart.toISOString(), weekEnd.toISOString(), b.weekNumber ?? null, b.phase ?? null, b.goal ?? null, b.summary ?? null, now, now])
+    const plan = getOrCreateActivePlan()
+    run('INSERT INTO TrainingWeek (id, planId, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)', [id, plan.id, weekStart.toISOString(), weekEnd.toISOString(), b.weekNumber ?? null, b.phase ?? null, b.goal ?? null, b.summary ?? null, now, now])
     if (Array.isArray(b.sessions)) {
       b.sessions.forEach((s: { dayOfWeek: number; type: string; plannedDistance?: number | null; plannedDuration?: number | null; plannedPace?: string | null; intensity?: string | null; description?: string }, idx: number) => {
         const date = new Date(weekStart)
@@ -99,9 +159,7 @@ const weekDetailHandler: Handler = async (req) => {
     return json({ week: weekFull(id) })
   }
   if (req.method === 'DELETE') {
-    run('DELETE FROM TrainingWeek WHERE id = ?', [id])
-    run('DELETE FROM TrainingSession WHERE weekId = ?', [id])
-    run('DELETE FROM AIReview WHERE weekId = ?', [id])
+    deleteWeek(id)
     return json({ success: true })
   }
   return methodErr(req.method)
@@ -237,17 +295,19 @@ const templatesApplyHandler: Handler = async (req) => {
 const template = TRAINING_TEMPLATES.find((t) => t.id === templateId)
   if (!template) return json({ error: '模板不存在' }, 404)
   if (!runnerProfile()) return json({ error: '请先在跑者档案中填写信息' }, 400)
-  const today = new Date()
-  const day = today.getDay()
-  const nextMonday = new Date(today)
-  const diff = day === 0 ? 1 : 8 - day
-  nextMonday.setDate(today.getDate() + diff)
-  nextMonday.setHours(0, 0, 0, 0)
+  const nextMonday = nextMondayOf()
+
+  // 防重复：下周课表已存在则直接复用
+  const existing = findWeekStartingOn(nextMonday)
+  if (existing) return json({ week: weekFull(existing.id as string), template, reused: true })
+
   const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)
-  const wNum = ((all('SELECT COUNT(*) as c FROM TrainingWeek')[0] as { c: number }).c) + 1
+  const plan = getOrCreateActivePlan()
+  const maxNum = get('SELECT MAX(weekNumber) AS m FROM TrainingWeek WHERE planId = ?', [plan.id]) as { m: number | null } | null
+  const wNum = ((maxNum?.m as number) || 0) + 1
   const id = uid()
   const now = nowIso()
-  run('INSERT INTO TrainingWeek (id, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)', [id, nextMonday.toISOString(), nextSunday.toISOString(), wNum, template.sampleWeek.phase, template.sampleWeek.weekGoal, `基于模板「${template.name}」生成。${template.description}`, now, now])
+  run('INSERT INTO TrainingWeek (id, planId, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)', [id, plan.id, nextMonday.toISOString(), nextSunday.toISOString(), wNum, template.sampleWeek.phase, template.sampleWeek.weekGoal, `基于模板「${template.name}」生成。${template.description}`, now, now])
   template.sampleWeek.sessions.forEach((s, idx) => {
     const date = new Date(nextMonday)
     date.setDate(nextMonday.getDate() + (s.dayOfWeek === 0 ? 6 : s.dayOfWeek - 1))
@@ -261,14 +321,10 @@ const seedHandler: Handler = async () => {
   const now = nowIso()
   run('INSERT INTO Runner (id, name, age, gender, weight, height, restingHr, maxHr, vo2max, experience, targetRace, targetDate, targetTime, weeklyMileage, notes, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [uid(), '跑者', 28, 'male', 65, 175, 58, 190, 50, 'intermediate', '半马', null, '1:45:00', 40, null, now, now])
   const weekId = uid()
-  const today = new Date()
-  const day = today.getDay()
-  const monday = new Date(today)
-  const diff = day === 0 ? -6 : 1 - day
-  monday.setDate(today.getDate() + diff)
-  monday.setHours(0, 0, 0, 0)
+  const monday = thisMondayOf()
   const sunday = new Date(monday.getTime() + 6 * 86400000)
-  run('INSERT INTO TrainingWeek (id, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)', [weekId, monday.toISOString(), sunday.toISOString(), 1, 'base', '建立有氧基础，周跑量 40km', '基础期第 1 周', now, now])
+  const plan = getOrCreateActivePlan()
+  run('INSERT INTO TrainingWeek (id, planId, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)', [weekId, plan.id, monday.toISOString(), sunday.toISOString(), 1, 'base', '建立有氧基础，周跑量 40km', '基础期第 1 周', now, now])
   const seedSessions = [
     { dayOfWeek: 1, type: 'easy', d: 8, dur: 50, pace: '6:00/km', z: 'Z2', desc: '轻松跑 8km，注意呼吸与放松。' },
     { dayOfWeek: 2, type: 'rest', d: null, dur: null, pace: null, z: 'rest', desc: '休息日，可拉伸或进行低强度活动。' },
@@ -286,6 +342,55 @@ const seedHandler: Handler = async () => {
   return json({ ok: true, seeded: true })
 }
 
+const plansHandler: Handler = async (req) => {
+  if (req.method === 'GET') {
+    // 兜底迁移：无周期但有训练周时，自动创建默认周期并把遗留周归入
+    const weekCount = get('SELECT COUNT(*) AS c FROM TrainingWeek') as { c: number }
+    const planCount = get('SELECT COUNT(*) AS c FROM TrainingPlan') as { c: number }
+    if (Number(weekCount.c) > 0 && Number(planCount.c) === 0) {
+      const plan = getOrCreateActivePlan()
+      run('UPDATE TrainingWeek SET planId = ? WHERE planId IS NULL', [plan.id])
+    }
+    const plans = all('SELECT * FROM TrainingPlan ORDER BY createdAt ASC').map((p) => ({
+      ...p,
+      active: Boolean(p.active),
+      weeks: all('SELECT * FROM TrainingWeek WHERE planId = ? ORDER BY weekStart ASC', [p.id]).map((w) => weekFull(w.id as string)),
+    }))
+    return json({ plans })
+  }
+  if (req.method === 'POST') {
+    const b = req.body || {}
+    run('UPDATE TrainingPlan SET active = 0 WHERE active = 1')
+    const now = nowIso()
+    const id = uid()
+    run('INSERT INTO TrainingPlan (id, title, goal, targetRace, active, startedAt, createdAt, updatedAt) VALUES (?,?,?,?,1,?,?,?)', [id, b.title || '我的训练计划', b.goal ?? null, b.targetRace ?? null, now, now, now])
+    return json({ plan: get('SELECT * FROM TrainingPlan WHERE id = ?', [id]) })
+  }
+  return methodErr(req.method)
+}
+
+const planDetailHandler: Handler = async (req) => {
+  const id = req.params.id
+  if (req.method === 'PATCH') {
+    const b = req.body || {}
+    if (b.active === true) {
+      run('UPDATE TrainingPlan SET active = 0 WHERE active = 1')
+      run('UPDATE TrainingPlan SET active = 1, updatedAt = ? WHERE id = ?', [nowIso(), id])
+    } else if (b.title) {
+      run('UPDATE TrainingPlan SET title = ?, updatedAt = ? WHERE id = ?', [String(b.title), nowIso(), id])
+    }
+    const plan = get('SELECT * FROM TrainingPlan WHERE id = ?', [id])
+    return json({ plan: plan ? { ...plan, active: Boolean(plan.active) } : null })
+  }
+  if (req.method === 'DELETE') {
+    const weekIds = all('SELECT id FROM TrainingWeek WHERE planId = ?', [id]).map((r) => r.id)
+    for (const wid of weekIds) deleteWeek(wid as string)
+    run('DELETE FROM TrainingPlan WHERE id = ?', [id])
+    return json({ success: true })
+  }
+  return methodErr(req.method)
+}
+
 export function registerCoreHandlers(map: Map<string, Handler>): void {
   map.set('GET /api/runner', runnerHandler)
   map.set('POST /api/runner', runnerHandler)
@@ -294,6 +399,11 @@ export function registerCoreHandlers(map: Map<string, Handler>): void {
   map.set('GET /api/templates', templatesHandler)
   map.set('POST /api/templates', templatesApplyHandler)
   map.set('POST /api/seed', seedHandler)
+  map.set('GET /api/plans', plansHandler)
+  map.set('POST /api/plans', plansHandler)
+  map.set('GET /api/plans/[id]', planDetailHandler)
+  map.set('PATCH /api/plans/[id]', planDetailHandler)
+  map.set('DELETE /api/plans/[id]', planDetailHandler)
 }
 
 export function registerWeekSessionHandlers(map: Map<string, Handler>): void {

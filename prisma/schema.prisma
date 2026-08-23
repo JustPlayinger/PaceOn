@@ -30,9 +30,26 @@ model Runner {
   updatedAt     DateTime @updatedAt
 }
 
+// 训练周期（计划）—— 一组连续训练周的聚合
+model TrainingPlan {
+  id         String        @id @default(cuid())
+  title      String        // 计划名称，如「全马 sub4 计划」
+  goal       String?       // 计划目标
+  targetRace String?       // 目标赛事
+  active     Boolean       @default(true) // 当前启用的唯一计划
+  startedAt  DateTime      @default(now())
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  weeks      TrainingWeek[]
+
+  @@index([active])
+}
+
 // 训练周
 model TrainingWeek {
-  id         String   @id @default(cuid())
+  id         String         @id @default(cuid())
+  planId     String?
+  plan       TrainingPlan?  @relation(fields: [planId], references: [id], onDelete: SetNull)
   weekStart  DateTime // 周一日期
   weekEnd    DateTime // 周日日期
   weekNumber Int?     // 训练周期第几周
@@ -43,6 +60,8 @@ model TrainingWeek {
   updatedAt  DateTime @updatedAt
   sessions   TrainingSession[]
   reviews    AIReview[]
+
+  @@index([planId])
 }
 
 // 训练课（计划）

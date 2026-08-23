@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { TRAINING_TEMPLATES } from '@/lib/templates'
+import { nextMondayOf, findWeekStartingOn, getOrCreateActivePlan } from '@/lib/plan-utils'
 
 // 获取所有模板
 export async function GET() {
@@ -28,21 +29,29 @@ export async function POST(req: NextRequest) {
     }
 
     // 计算下周的周一
-    const today = new Date()
-    const day = today.getDay()
-    const nextMonday = new Date(today)
-    const diff = day === 0 ? 1 : 8 - day
-    nextMonday.setDate(today.getDate() + diff)
-    nextMonday.setHours(0, 0, 0, 0)
+    const nextMonday = nextMondayOf()
     const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)
 
-    // 确定 weekNumber
-    const existingWeeks = await db.trainingWeek.count()
-    const wNum = weekNumber ?? existingWeeks + 1
+    // 防重复：下周课表已存在则直接复用
+    const existingWeek = await findWeekStartingOn(nextMonday)
+    if (existingWeek) {
+      return NextResponse.json({ week: existingWeek, template, reused: true })
+    }
 
-    // 创建训练周
+    // 唯一启用计划
+    const activePlan = await getOrCreateActivePlan()
+
+    // 确定 weekNumber
+    const maxNum = await db.trainingWeek.aggregate({
+      where: { planId: activePlan.id },
+      _max: { weekNumber: true },
+    })
+    const wNum = weekNumber ?? (maxNum._max.weekNumber ?? 0) + 1
+
+    // 创建训练周（归入当前启用计划）
     const week = await db.trainingWeek.create({
       data: {
+        planId: activePlan.id,
         weekStart: nextMonday,
         weekEnd: nextSunday,
         weekNumber: wNum,

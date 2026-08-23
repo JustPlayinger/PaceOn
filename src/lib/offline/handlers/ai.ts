@@ -7,7 +7,7 @@ import { ocrImageBrowser, toDataUrl } from '../ocr'
 import { getDeepseekConfig } from '../config'
 import { callDeepseekApi, OCR_PARSE_PROMPT, parseExtractedFields, generateWeeklyReview, generateNextWeekPlan, generateInitialPlan, generatePlanFromChat, chatWithCoach, generateMicroAdjust, analyzeSingleSession, type RunnerProfile, type SessionForReview } from '../ai'
 import type { ApiRequest, Handler } from '../types'
-import { json, methodErr } from './core'
+import { json, methodErr, nextMondayOf, findWeekStartingOn, getOrCreateActivePlan, weekFull } from './core'
 
 function runnerProfile(): RunnerProfile | null {
   const r = get('SELECT * FROM Runner LIMIT 1')
@@ -81,24 +81,35 @@ const planHandler: Handler = async (req) => {
   const { fromWeekId } = (req.body || {}) as { fromWeekId?: string }
   const runner = runnerProfile()
   if (!runner) return json({ error: '请先填写跑者档案' }, 400)
+
+  const nextMonday = nextMondayOf()
+
+  // 防重复：下周课表已存在则直接复用
+  const existing = findWeekStartingOn(nextMonday)
+  if (existing) {
+    return json({ week: weekFull(existing.id as string), plan: { phase: existing.phase, weekGoal: existing.goal, summary: existing.summary }, reused: true })
+  }
+
+  const activePlan = getOrCreateActivePlan()
+
   let plan
   let weekNumber = 1
   let lastReview: string | null = null
   let lastWeekSessions: SessionForReview[] = []
+  let fromWeekFound = false
   if (fromWeekId) {
     const fromWeek = get('SELECT * FROM TrainingWeek WHERE id = ?', [fromWeekId])
-    if (fromWeek) { weekNumber = ((fromWeek.weekNumber as number) || 1) + 1; lastReview = (fromWeek.summary as string) || null; lastWeekSessions = sessionsForReview(fromWeekId) }
+    if (fromWeek) { fromWeekFound = true; weekNumber = ((fromWeek.weekNumber as number) || 1) + 1; lastReview = (fromWeek.summary as string) || null; lastWeekSessions = sessionsForReview(fromWeekId) }
   }
-  plan = fromWeekId ? await generateNextWeekPlan(runner, lastWeekSessions, lastReview, weekNumber) : await generateInitialPlan(runner)
-  const today = new Date()
-  const day = today.getDay()
-  const nextMonday = new Date(today)
-  const diff = day === 0 ? 1 : 8 - day
-  nextMonday.setDate(today.getDate() + diff); nextMonday.setHours(0, 0, 0, 0)
+  if (!fromWeekFound) {
+    const maxNum = get('SELECT MAX(weekNumber) AS m FROM TrainingWeek WHERE planId = ?', [activePlan.id]) as { m: number | null } | null
+    weekNumber = ((maxNum?.m as number) || 0) + 1
+  }
+  plan = fromWeekFound ? await generateNextWeekPlan(runner, lastWeekSessions, lastReview, weekNumber) : await generateInitialPlan(runner)
   const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)
   const id = uid()
   const now = nowIso()
-  run('INSERT INTO TrainingWeek (id, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)', [id, nextMonday.toISOString(), nextSunday.toISOString(), weekNumber, plan.phase, plan.weekGoal, plan.summary, now, now])
+  run('INSERT INTO TrainingWeek (id, planId, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)', [id, activePlan.id, nextMonday.toISOString(), nextSunday.toISOString(), weekNumber, plan.phase, plan.weekGoal, plan.summary, now, now])
   plan.sessions.forEach((s, idx) => {
     const date = new Date(nextMonday)
     date.setDate(nextMonday.getDate() + (s.dayOfWeek === 0 ? 6 : s.dayOfWeek - 1))
@@ -119,23 +130,33 @@ const chatPlanHandler: Handler = async (req) => {
   }
   if (action === 'generate') {
     const { history, fromWeekId } = (req.body || {}) as { history?: { role: string; content: string }[]; fromWeekId?: string }
+    const nextMonday = nextMondayOf()
+
+    // 防重复：下周课表已存在则直接复用
+    const existing = findWeekStartingOn(nextMonday)
+    if (existing) {
+      return json({ week: weekFull(existing.id as string), plan: { phase: existing.phase, weekGoal: existing.goal, summary: existing.summary }, reused: true })
+    }
+
+    const activePlan = getOrCreateActivePlan()
+
     let weekNumber = 1
     let lastReview: string | null = null
     let lastWeekSessions: SessionForReview[] = []
+    let fromWeekFound = false
     if (fromWeekId) {
       const fromWeek = get('SELECT * FROM TrainingWeek WHERE id = ?', [fromWeekId])
-      if (fromWeek) { weekNumber = ((fromWeek.weekNumber as number) || 1) + 1; lastReview = (fromWeek.summary as string) || null; lastWeekSessions = sessionsForReview(fromWeekId) }
+      if (fromWeek) { fromWeekFound = true; weekNumber = ((fromWeek.weekNumber as number) || 1) + 1; lastReview = (fromWeek.summary as string) || null; lastWeekSessions = sessionsForReview(fromWeekId) }
+    }
+    if (!fromWeekFound) {
+      const maxNum = get('SELECT MAX(weekNumber) AS m FROM TrainingWeek WHERE planId = ?', [activePlan.id]) as { m: number | null } | null
+      weekNumber = ((maxNum?.m as number) || 0) + 1
     }
     const plan = await generatePlanFromChat(runner, (history || []).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })), lastWeekSessions, lastReview)
-    const today = new Date()
-    const day = today.getDay()
-    const nextMonday = new Date(today)
-    const diff = day === 0 ? 1 : 8 - day
-    nextMonday.setDate(today.getDate() + diff); nextMonday.setHours(0, 0, 0, 0)
     const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)
     const id = uid()
     const now = nowIso()
-    run('INSERT INTO TrainingWeek (id, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)', [id, nextMonday.toISOString(), nextSunday.toISOString(), weekNumber, plan.phase, plan.weekGoal, plan.summary, now, now])
+    run('INSERT INTO TrainingWeek (id, planId, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)', [id, activePlan.id, nextMonday.toISOString(), nextSunday.toISOString(), weekNumber, plan.phase, plan.weekGoal, plan.summary, now, now])
     plan.sessions.forEach((s, idx) => {
       const date = new Date(nextMonday)
       date.setDate(nextMonday.getDate() + (s.dayOfWeek === 0 ? 6 : s.dayOfWeek - 1))
@@ -164,22 +185,49 @@ const sessionDetailAiHandler: Handler = async (req) => {
   if (!session) return json({ error: 'Session not found' }, 404)
   const runner = runnerProfile()
   if (!runner) return json({ error: 'Runner profile not found' }, 404)
-  if (req.method === 'GET') { const c = get('SELECT * FROM TrainingCompletion WHERE sessionId = ?', [id]); return json({ session: { ...session, completion: c || null } }) }
-  const c = get('SELECT * FROM TrainingCompletion WHERE sessionId = ?', [id])
+  const c = get('SELECT * FROM TrainingCompletion WHERE sessionId = ?', [id]) || null
+  const week = c || get('SELECT * FROM TrainingWeek WHERE id = ?', [session.weekId as string]) || null
+  if (req.method === 'GET') {
+    let curves: { paceCurve?: unknown; hrCurve?: unknown; elevationCurve?: unknown } = {}
+    if (c && c.rawExtract) {
+      try {
+        const raw = JSON.parse(c.rawExtract as string)
+        curves = { paceCurve: raw.paceCurve || null, hrCurve: raw.hrCurve || null, elevationCurve: raw.elevationCurve || null }
+      } catch { /* ignore */ }
+    }
+    return json({
+      session: {
+        id: session.id,
+        date: session.date,
+        dayOfWeek: session.dayOfWeek,
+        type: session.type,
+        plannedDistance: session.plannedDistance,
+        plannedDuration: session.plannedDuration,
+        plannedPace: session.plannedPace,
+        intensity: session.intensity,
+        description: session.description,
+        status: session.status,
+        week: week && week.id ? { id: week.id, weekNumber: week.weekNumber, phase: week.phase, goal: week.goal } : null,
+      },
+      completion: c,
+      curves,
+    })
+  }
+  if (!c) return json({ error: '该训练尚未上传完成数据' }, 400)
   const planned = { type: session.type, plannedDistance: session.plannedDistance, plannedDuration: session.plannedDuration, plannedPace: session.plannedPace, intensity: session.intensity, description: session.description }
   const content = await analyzeSingleSession(runner, planned, c ? { ...c } : {})
-  return json({ content })
+  return json({ analysis: content })
 }
 
 const dataExportHandler: Handler = async () => {
-  const data = { exportedAt: new Date().toISOString(), version: 1, runner: get('SELECT * FROM Runner LIMIT 1') || null, weeks: all('SELECT * FROM TrainingWeek').map((w) => ({ ...w, sessions: all('SELECT * FROM TrainingSession WHERE weekId = ?', [w.id]).map((s) => ({ ...s, completion: get('SELECT * FROM TrainingCompletion WHERE sessionId = ?', [s.id]) || null })), reviews: all('SELECT * FROM AIReview WHERE weekId = ?', [w.id]) })), shoes: all('SELECT * FROM Shoe'), usages: all('SELECT * FROM ShoeUsage'), recoveryLogs: all('SELECT * FROM RecoveryLog'), records: all('SELECT * FROM PersonalRecord') }
+  const data = { exportedAt: new Date().toISOString(), version: 1, plans: all('SELECT * FROM TrainingPlan').map((p) => ({ ...p, active: Boolean(p.active) })), runner: get('SELECT * FROM Runner LIMIT 1') || null, weeks: all('SELECT * FROM TrainingWeek').map((w) => ({ ...w, sessions: all('SELECT * FROM TrainingSession WHERE weekId = ?', [w.id]).map((s) => ({ ...s, completion: get('SELECT * FROM TrainingCompletion WHERE sessionId = ?', [s.id]) || null })), reviews: all('SELECT * FROM AIReview WHERE weekId = ?', [w.id]) })), shoes: all('SELECT * FROM Shoe'), usages: all('SELECT * FROM ShoeUsage'), recoveryLogs: all('SELECT * FROM RecoveryLog'), records: all('SELECT * FROM PersonalRecord') }
   return json(data)
 }
 
 const dataImportHandler: Handler = async (req) => {
   const { data, mode } = (req.body || {}) as { data?: Record<string, any>; mode?: string }
   if (!data) return json({ error: '缺少数据' }, 400)
-  if (mode === 'replace') for (const t of ['TrainingCompletion', 'TrainingSession', 'TrainingWeek', 'AIReview', 'ShoeUsage', 'Shoe', 'RecoveryLog', 'PersonalRecord', 'Runner']) run(`DELETE FROM ${t}`)
+  if (mode === 'replace') for (const t of ['TrainingCompletion', 'TrainingSession', 'TrainingWeek', 'TrainingPlan', 'AIReview', 'ShoeUsage', 'Shoe', 'RecoveryLog', 'PersonalRecord', 'Runner']) run(`DELETE FROM ${t}`)
   const now = nowIso()
   const mergeRunner = (r: any) => {
     if (!r) return
@@ -189,13 +237,34 @@ const dataImportHandler: Handler = async (req) => {
     else run('INSERT INTO Runner (id, name, age, gender, weight, height, restingHr, maxHr, vo2max, experience, targetRace, targetDate, targetTime, weeklyMileage, notes, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [uid(), ...vals, now, now])
   }
   mergeRunner(data.runner)
+
+  // 导入训练周期（无 plans 的旧备份会自动按周 planId 兜底重建）
+  if (Array.isArray(data.plans)) for (const p of data.plans) {
+    const pid = p.id || uid()
+    const existingPlan = get('SELECT * FROM TrainingPlan WHERE id = ?', [pid])
+    if (existingPlan) {
+      run('UPDATE TrainingPlan SET title=?, goal=?, targetRace=?, active=?, updatedAt=? WHERE id=?', [p.title || existingPlan.title, p.goal ?? existingPlan.goal, p.targetRace ?? existingPlan.targetRace, p.active ? 1 : 0, now, pid])
+    } else {
+      run('INSERT INTO TrainingPlan (id, title, goal, targetRace, active, startedAt, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?)', [pid, p.title || '我的训练计划', p.goal ?? null, p.targetRace ?? null, p.active ? 1 : 0, p.startedAt || now, p.createdAt || now, now])
+    }
+  }
+
   let weekCount = 0, sessionCount = 0
   if (Array.isArray(data.weeks)) for (const w of data.weeks) {
     const wid = w.id || uid()
     const existing = get('SELECT * FROM TrainingWeek WHERE id = ?', [wid])
-    const vals = [w.weekStart || now, w.weekEnd || now, w.weekNumber ?? null, w.phase ?? null, w.goal ?? null, w.summary ?? null, now]
-    if (existing) run('UPDATE TrainingWeek SET weekStart=?, weekEnd=?, weekNumber=?, phase=?, goal=?, summary=?, updatedAt=? WHERE id=?', [...vals, wid])
-    else run('INSERT INTO TrainingWeek (id, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)', [wid, ...vals, now])
+    // 归入训练周期：周带 planId 时确保该周期存在；否则归入当前启用计划
+    let widPlanId: string | null = w.planId ? String(w.planId) : null
+    if (widPlanId) {
+      if (!get('SELECT * FROM TrainingPlan WHERE id = ?', [widPlanId])) {
+        run('INSERT INTO TrainingPlan (id, title, goal, targetRace, active, startedAt, createdAt, updatedAt) VALUES (?,?,?,?,0,?,?,?)', [widPlanId, '我的训练计划', null, null, now, now, now])
+      }
+    } else {
+      widPlanId = getOrCreateActivePlan().id as string
+    }
+    const vals = [widPlanId, w.weekStart || now, w.weekEnd || now, w.weekNumber ?? null, w.phase ?? null, w.goal ?? null, w.summary ?? null, now]
+    if (existing) run('UPDATE TrainingWeek SET planId=?, weekStart=?, weekEnd=?, weekNumber=?, phase=?, goal=?, summary=?, updatedAt=? WHERE id=?', [...vals, wid])
+    else run('INSERT INTO TrainingWeek (id, planId, weekStart, weekEnd, weekNumber, phase, goal, summary, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)', [wid, ...vals, now])
     if (Array.isArray(w.sessions)) for (const s of w.sessions) {
       const sid = s.id || uid()
       run('INSERT OR REPLACE INTO TrainingSession (id, weekId, date, dayOfWeek, type, plannedDistance, plannedDuration, plannedPace, intensity, description, status, "order", createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [sid, wid, s.date || now, s.dayOfWeek ?? 1, s.type || 'easy', s.plannedDistance ?? null, s.plannedDuration ?? null, s.plannedPace ?? null, s.intensity ?? null, s.description || '', s.status || 'pending', s.order ?? 0, s.createdAt || now, now])

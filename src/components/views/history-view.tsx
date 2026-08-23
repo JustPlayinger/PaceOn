@@ -2,25 +2,28 @@
 
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { History, Calendar, TrendingUp, Timer, Heart, Mountain, ChevronRight, ArrowLeft, BrainCircuit, Activity, ExternalLink } from 'lucide-react'
+import { History, TrendingUp, Timer, Heart, Mountain, ChevronRight, ChevronDown, ArrowLeft, BrainCircuit, Activity, ExternalLink, Trash2, Layers } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { SESSION_TYPES, STATUS_LABELS, DAY_LABELS, PHASE_LABELS, formatDuration, formatDate, getWeekRange } from '@/lib/training'
 import { SessionDetailDialog } from './session-detail-dialog'
-import type { Week } from './types'
+import type { Week, Plan } from './types'
 
 interface Props {
   weeks: Week[]
+  plans: Plan[]
   onSelectWeek: (w: Week) => void
   onSwitchToReview: () => void
+  onChanged: () => void
 }
 
-export function HistoryViewImpl({ weeks, onSelectWeek, onSwitchToReview }: Props) {
+export function HistoryViewImpl({ weeks, plans, onSelectWeek, onSwitchToReview, onChanged }: Props) {
   const [selected, setSelected] = useState<Week | null>(null)
+  const [expandedPlans, setExpandedPlans] = useState<Record<string, boolean>>({})
 
   if (selected) {
-    return <WeekDetailView week={selected} onBack={() => setSelected(null)} onSwitchToReview={onSwitchToReview} />
+    return <WeekDetailView week={selected} onBack={() => setSelected(null)} onSwitchToReview={onSwitchToReview} onDeleted={onChanged} />
   }
 
   if (weeks.length === 0) {
@@ -32,79 +35,163 @@ export function HistoryViewImpl({ weeks, onSelectWeek, onSwitchToReview }: Props
     )
   }
 
+  // 按训练周期分组（无归属的周归入「未分组」）
+  const grouped = new Set<string>()
+  const groups: { plan: Plan | null; weeks: Week[] }[] = []
+  for (const p of plans) {
+    const pWeeks = weeks.filter(w => w.planId === p.id)
+    if (pWeeks.length === 0) continue
+    pWeeks.forEach(w => grouped.add(w.id))
+    groups.push({ plan: p, weeks: pWeeks })
+  }
+  const orphanWeeks = weeks.filter(w => !grouped.has(w.id))
+  if (orphanWeeks.length > 0) groups.push({ plan: null, weeks: orphanWeeks })
+
+  const togglePlan = (id: string) => setExpandedPlans(prev => ({ ...prev, [id]: !prev[id] }))
+
+  const handleDeleteWeek = async (w: Week) => {
+    if (!window.confirm(`确定删除第 ${w.weekNumber ?? '?'} 周课表吗？\n其下 ${w.sessions.length} 节训练课及完成记录将一并删除。`)) return
+    const res = await fetch(`/api/weeks/${w.id}`, { method: 'DELETE' })
+    const d = await res.json()
+    if (d.error) throw new Error(d.error)
+    onChanged()
+  }
+
+  const handleDeletePlan = async (p: Plan) => {
+    const count = weeks.filter(w => w.planId === p.id).length
+    if (!window.confirm(`确定删除训练周期「${p.title}」吗？\n其下 ${count} 个训练周（含训练课、完成记录、点评）将一并删除。`)) return
+    const res = await fetch(`/api/plans/${p.id}`, { method: 'DELETE' })
+    const d = await res.json()
+    if (d.error) throw new Error(d.error)
+    onChanged()
+  }
+
   return (
     <div className="space-y-4">
       <div>
         <h2 className="text-lg font-bold text-slate-900 mb-1">历史课表归档</h2>
-        <p className="text-sm text-slate-500">共 {weeks.length} 个训练周，点击查看详情</p>
+        <p className="text-sm text-slate-500">共 {weeks.length} 个训练周 · {plans.length} 个训练周期，点击查看详情</p>
       </div>
 
-      <div className="grid gap-3">
-        {weeks.map(w => {
-          const sessions = [...w.sessions].sort((a, b) => (a.dayOfWeek === 0 ? 7 : a.dayOfWeek) - (b.dayOfWeek === 0 ? 7 : b.dayOfWeek))
-          const completed = sessions.filter(s => s.status === 'completed')
-          const plannedTotal = sessions.reduce((sum, s) => sum + (s.plannedDistance || 0), 0)
-          const actualTotal = completed.reduce((sum, s) => sum + (s.completion?.distance || 0), 0)
-          const rate = plannedTotal > 0 ? Math.min(100, Math.round((actualTotal / plannedTotal) * 100)) : 0
-          const review = w.reviews?.find(r => r.type === 'weekly_review')
+      {groups.map(group => {
+        const plan = group.plan
+        const gid = plan ? plan.id : '__orphan'
+        const expanded = expandedPlans[gid] !== false
+        const groupWeeks = [...group.weeks].sort((a, b) => new Date(a.weekStart).getTime() - new Date(b.weekStart).getTime())
 
-          return (
-            <button
-              key={w.id}
-              onClick={() => { setSelected(w); onSelectWeek(w) }}
-              className="group text-left rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all"
-            >
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-bold text-slate-900">第 {w.weekNumber ?? '?'} 周</span>
-                  <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
-                    {PHASE_LABELS[w.phase || ''] || w.phase || '-'}
-                  </Badge>
-                  <Badge variant="outline" className="text-slate-500">{getWeekRange(w.weekStart, w.weekEnd)}</Badge>
-                  {review && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">{review.rating}/100</Badge>}
-                </div>
-                <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all" />
-              </div>
+        return (
+          <div key={gid} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            {/* 周期头部（可折叠） */}
+            <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gradient-to-r from-emerald-50/60 to-transparent border-b border-slate-100">
+              <button onClick={() => togglePlan(gid)} className="flex items-center gap-2 text-left flex-1 min-w-0">
+                {expanded ? <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" /> : <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />}
+                <Layers className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span className="font-semibold text-slate-800 truncate">{plan?.title || '未分组课表'}</span>
+                {plan?.active && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 shrink-0">当前启用</Badge>}
+                <span className="text-xs text-slate-400 shrink-0">{groupWeeks.length} 周</span>
+              </button>
+              {plan && (
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-rose-500 hover:bg-rose-50 hover:text-rose-600 shrink-0" onClick={() => handleDeletePlan(plan).catch((e) => alert('删除失败：' + (e as Error).message))}>
+                  <Trash2 className="h-3.5 w-3.5 mr-1" />删除周期
+                </Button>
+              )}
+            </div>
 
-              <p className="text-xs text-slate-500 mb-3 line-clamp-1">{w.goal || '本周训练课表'}</p>
-
-              <div className="flex items-center gap-4 text-xs text-slate-600 mb-2">
-                <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3 text-emerald-500" />{actualTotal.toFixed(1)}/{plannedTotal.toFixed(0)} km</span>
-                <span className="flex items-center gap-1"><Activity className="h-3 w-3 text-sky-500" />{completed.length}/{sessions.length} 完成</span>
-                <span className="flex items-center gap-1"><Timer className="h-3 w-3 text-orange-500" />{formatDuration(completed.reduce((s, x) => s + (x.completion?.duration || 0), 0))}</span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Progress value={rate} className="h-1.5 flex-1" />
-                <span className="text-xs text-slate-500 w-9 text-right">{rate}%</span>
-              </div>
-
-              {/* 一周完成缩略 */}
-              <div className="flex gap-1 mt-3">
-                {sessions.map(s => {
-                  const cfg = SESSION_TYPES[s.type] || SESSION_TYPES.easy
-                  return (
-                    <div
-                      key={s.id}
-                      className={`flex-1 h-6 rounded text-center text-[9px] flex items-center justify-center border ${cfg.bg} ${cfg.color}`}
-                      title={`${DAY_LABELS[s.dayOfWeek]} ${cfg.label}${s.completion ? ' ✓' : ''}`}
+            {expanded && (
+              <div className="p-3 grid gap-3">
+                {groupWeeks.map(w => (
+                  <div key={w.id} className="relative">
+                    <WeekCard week={w} onOpen={() => { setSelected(w); onSelectWeek(w) }} />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteWeek(w).catch((err) => alert('删除失败：' + (err as Error).message)) }}
+                      className="absolute top-2 right-2 z-10 h-7 w-7 rounded-lg bg-white/90 border border-slate-200 text-slate-400 hover:text-rose-500 hover:border-rose-200 flex items-center justify-center shadow-sm"
+                      title="删除该周课表"
                     >
-                      {cfg.icon}
-                    </div>
-                  )
-                })}
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
-            </button>
-          )
-        })}
-      </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-function WeekDetailView({ week, onBack, onSwitchToReview }: { week: Week; onBack: () => void; onSwitchToReview: () => void }) {
+function WeekCard({ week: w, onOpen }: { week: Week; onOpen: () => void }) {
+  const sessions = [...w.sessions].sort((a, b) => (a.dayOfWeek === 0 ? 7 : a.dayOfWeek) - (b.dayOfWeek === 0 ? 7 : b.dayOfWeek))
+  const completed = sessions.filter(s => s.status === 'completed')
+  const plannedTotal = sessions.reduce((sum, s) => sum + (s.plannedDistance || 0), 0)
+  const actualTotal = completed.reduce((sum, s) => sum + (s.completion?.distance || 0), 0)
+  const rate = plannedTotal > 0 ? Math.min(100, Math.round((actualTotal / plannedTotal) * 100)) : 0
+  const review = w.reviews?.find(r => r.type === 'weekly_review')
+
+  return (
+    <button
+      onClick={onOpen}
+      className="group text-left w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all"
+    >
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-bold text-slate-900">第 {w.weekNumber ?? '?'} 周</span>
+          <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+            {PHASE_LABELS[w.phase || ''] || w.phase || '-'}
+          </Badge>
+          <Badge variant="outline" className="text-slate-500">{getWeekRange(w.weekStart, w.weekEnd)}</Badge>
+          {review && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">{review.rating}/100</Badge>}
+        </div>
+        <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all" />
+      </div>
+
+      <p className="text-xs text-slate-500 mb-3 line-clamp-1">{w.goal || '本周训练课表'}</p>
+
+      <div className="flex items-center gap-4 text-xs text-slate-600 mb-2">
+        <span className="flex items-center gap-1"><TrendingUp className="h-3 w-3 text-emerald-500" />{actualTotal.toFixed(1)}/{plannedTotal.toFixed(0)} km</span>
+        <span className="flex items-center gap-1"><Activity className="h-3 w-3 text-sky-500" />{completed.length}/{sessions.length} 完成</span>
+        <span className="flex items-center gap-1"><Timer className="h-3 w-3 text-orange-500" />{formatDuration(completed.reduce((s, x) => s + (x.completion?.duration || 0), 0))}</span>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Progress value={rate} className="h-1.5 flex-1" />
+        <span className="text-xs text-slate-500 w-9 text-right">{rate}%</span>
+      </div>
+
+      {/* 一周完成缩略 */}
+      <div className="flex gap-1 mt-3">
+        {sessions.map(s => {
+          const cfg = SESSION_TYPES[s.type] || SESSION_TYPES.easy
+          return (
+            <div
+              key={s.id}
+              className={`flex-1 h-6 rounded text-center text-[9px] flex items-center justify-center border ${cfg.bg} ${cfg.color}`}
+              title={`${DAY_LABELS[s.dayOfWeek]} ${cfg.label}${s.completion ? ' ✓' : ''}`}
+            >
+              {cfg.icon}
+            </div>
+          )
+        })}
+      </div>
+    </button>
+  )
+}
+
+function WeekDetailView({ week, onBack, onSwitchToReview, onDeleted }: { week: Week; onBack: () => void; onSwitchToReview: () => void; onDeleted: () => void }) {
   const [detailSessionId, setDetailSessionId] = useState<string | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+
+  const handleDelete = async () => {
+    if (!window.confirm(`确定删除第 ${week.weekNumber ?? '?'} 周课表吗？\n其下 ${week.sessions.length} 节训练课及完成记录将一并删除。`)) return
+    try {
+      const res = await fetch(`/api/weeks/${week.id}`, { method: 'DELETE' })
+      const d = await res.json()
+      if (d.error) throw new Error(d.error)
+      onDeleted()
+    } catch (e) {
+      alert('删除失败：' + (e as Error).message)
+    }
+  }
   const sessions = [...week.sessions].sort((a, b) => (a.dayOfWeek === 0 ? 7 : a.dayOfWeek) - (b.dayOfWeek === 0 ? 7 : b.dayOfWeek))
   const completed = sessions.filter(s => s.status === 'completed')
   const plannedTotal = sessions.reduce((sum, s) => sum + (s.plannedDistance || 0), 0)
@@ -128,9 +215,14 @@ function WeekDetailView({ week, onBack, onSwitchToReview }: { week: Week; onBack
             </Badge>
             <Badge variant="outline" className="text-slate-500">{getWeekRange(week.weekStart, week.weekEnd)}</Badge>
           </div>
-          <Button size="sm" variant="outline" onClick={onSwitchToReview} className="border-emerald-200 text-emerald-700">
-            <BrainCircuit className="h-3.5 w-3.5 mr-1" />前往 AI 点评
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="outline" onClick={onSwitchToReview} className="border-emerald-200 text-emerald-700">
+              <BrainCircuit className="h-3.5 w-3.5 mr-1" />前往 AI 点评
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleDelete} className="border-rose-200 text-rose-600 hover:bg-rose-50">
+              <Trash2 className="h-3.5 w-3.5 mr-1" />删除该周
+            </Button>
+          </div>
         </div>
         <p className="text-sm text-slate-600">{week.goal}</p>
 

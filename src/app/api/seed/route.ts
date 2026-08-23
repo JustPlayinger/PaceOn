@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getOrCreateActivePlan } from '@/lib/plan-utils'
 
 // 种子数据初始化：示例跑者 + 本周基础课表
 export async function POST() {
@@ -39,8 +40,12 @@ export async function POST() {
     monday.setHours(0, 0, 0, 0)
     const sunday = new Date(monday.getTime() + 6 * 86400000)
 
+    // 当前启用计划（唯一）
+    const activePlan = await getOrCreateActivePlan()
+
     const week = await db.trainingWeek.create({
       data: {
+        planId: activePlan.id,
         weekStart: monday,
         weekEnd: sunday,
         weekNumber: 1,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { thisMondayOf, getOrCreateActivePlan } from '@/lib/plan-utils'
 
 // 获取所有训练周（含 sessions 和 completion）
 export async function GET(req: NextRequest) {
@@ -18,14 +19,24 @@ export async function GET(req: NextRequest) {
     })
 
     if (current === 'true' && weeks.length > 0) {
-      // 返回当前周（包含今天的那一周）
-      const today = new Date()
-      const day = today.getDay() // 0=周日
-      const monday = new Date(today)
-      const diff = day === 0 ? -6 : 1 - day
-      monday.setDate(today.getDate() + diff)
-      monday.setHours(0, 0, 0, 0)
+      const monday = thisMondayOf()
 
+      // 优先返回「当前启用计划」中的当前周 / 最近一周
+      const activePlan = await db.trainingPlan.findFirst({ where: { active: true } })
+      if (activePlan) {
+        const planWeeks = weeks.filter((w) => w.planId === activePlan.id)
+        if (planWeeks.length > 0) {
+          const planCurrentWeek = planWeeks.find((w) => {
+            const ws = new Date(w.weekStart)
+            ws.setHours(0, 0, 0, 0)
+            return ws.getTime() === monday.getTime()
+          })
+          if (planCurrentWeek) return NextResponse.json({ week: planCurrentWeek })
+          return NextResponse.json({ week: planWeeks[0] })
+        }
+      }
+
+      // 兜底：包含今天的周；仍无则取最新周
       const currentWeek = weeks.find((w) => {
         const ws = new Date(w.weekStart)
         ws.setHours(0, 0, 0, 0)
@@ -47,8 +58,12 @@ export async function POST(req: NextRequest) {
     const weekStart = new Date(body.weekStart)
     const weekEnd = new Date(body.weekEnd || new Date(weekStart.getTime() + 6 * 86400000))
 
+    // 归入当前启用计划
+    const activePlan = await getOrCreateActivePlan()
+
     const week = await db.trainingWeek.create({
       data: {
+        planId: activePlan.id,
         weekStart,
         weekEnd,
         weekNumber: body.weekNumber ?? null,

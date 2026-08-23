@@ -32,7 +32,7 @@ import { WarmupCooldownDialog } from '@/components/views/warmup-cooldown-dialog'
 import { RaceCountdown } from '@/components/views/race-countdown'
 import { ProgressRing } from '@/components/views/progress-ring'
 import { weekToMarkdown, copyToClipboard, downloadTextFile, printWeek } from '@/components/views/export-utils'
-import type { Week, Runner, Session } from '@/components/views/types'
+import type { Week, Runner, Session, Plan } from '@/components/views/types'
 import { patchFetch } from '@/lib/api-client'
 import { initOfflineMode, isOfflineModeEnabled } from '@/lib/offline'
 
@@ -52,6 +52,7 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>('dashboard')
   const [runner, setRunner] = useState<Runner | null>(null)
   const [weeks, setWeeks] = useState<Week[]>([])
+  const [plans, setPlans] = useState<Plan[]>([])
   const [currentWeek, setCurrentWeek] = useState<Week | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
@@ -75,11 +76,17 @@ export default function Home() {
     setCurrentWeek(data.week || null)
   }, [])
 
+  const loadPlans = useCallback(async () => {
+    const res = await fetch('/api/plans')
+    const data = await res.json()
+    setPlans(data.plans || [])
+  }, [])
+
   const loadAll = useCallback(async () => {
     setLoading(true)
-    await Promise.all([loadRunner(), loadWeeks(), loadCurrentWeek()])
+    await Promise.all([loadRunner(), loadWeeks(), loadCurrentWeek(), loadPlans()])
     setLoading(false)
-  }, [loadRunner, loadWeeks, loadCurrentWeek])
+  }, [loadRunner, loadWeeks, loadCurrentWeek, loadPlans])
 
   useEffect(() => {
     // 等待离线数据层初始化完成后再加载数据（非离线模式立即返回）
@@ -202,7 +209,7 @@ export default function Home() {
             {tab === 'records' && <RecordsView />}
             {tab === 'pace' && <PaceCalculatorView />}
             {tab === 'achievements' && <AchievementsView />}
-            {tab === 'history' && <HistoryView weeks={weeks} onSelectWeek={setCurrentWeek} onSwitchToReview={() => setTab('review')} />}
+            {tab === 'history' && <HistoryView weeks={weeks} plans={plans} onSelectWeek={setCurrentWeek} onSwitchToReview={() => setTab('review')} onChanged={refresh} />}
             {tab === 'profile' && <ProfileView runner={runner} refresh={refresh} />}
             {tab === 'data' && <DataView onDataChanged={refresh} />}
           </>
@@ -701,12 +708,14 @@ function ReviewView({ week, runner, refresh }: { week: Week | null; runner: Runn
   return <ReviewViewImpl week={week} runner={runner} refresh={refresh} />
 }
 
-function HistoryView({ weeks, onSelectWeek, onSwitchToReview }: {
+function HistoryView({ weeks, plans, onSelectWeek, onSwitchToReview, onChanged }: {
   weeks: Week[]
+  plans: Plan[]
   onSelectWeek: (w: Week) => void
   onSwitchToReview: () => void
+  onChanged: () => void
 }) {
-  return <HistoryViewImpl weeks={weeks} onSelectWeek={onSelectWeek} onSwitchToReview={onSwitchToReview} />
+  return <HistoryViewImpl weeks={weeks} plans={plans} onSelectWeek={onSelectWeek} onSwitchToReview={onSwitchToReview} onChanged={onChanged} />
 }
 
 function ProfileView({ runner, refresh }: { runner: Runner | null; refresh: () => void }) {

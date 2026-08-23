@@ -80,3 +80,5 @@ workspace-*
 
 # ===== APK 构建产物 =====
 /download/*.apk
+/download/apk-latest/
+/download/*.zip

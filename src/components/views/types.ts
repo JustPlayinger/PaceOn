@@ -64,8 +64,21 @@ export interface AIReview {
   createdAt: string
 }
 
+export interface Plan {
+  id: string
+  title: string
+  goal?: string | null
+  targetRace?: string | null
+  active: boolean
+  startedAt: string
+  createdAt: string
+  updatedAt: string
+  weeks?: Week[]
+}
+
 export interface Week {
   id: string
+  planId?: string | null
   weekStart: string
   weekEnd: string
   weekNumber?: number | null

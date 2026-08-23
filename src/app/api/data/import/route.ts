@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
       await db.trainingCompletion.deleteMany()
       await db.trainingSession.deleteMany()
       await db.trainingWeek.deleteMany()
+      await db.trainingPlan.deleteMany()
       await db.shoe.deleteMany()
       await db.runner.deleteMany()
     }
@@ -53,6 +54,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 导入训练周期（旧备份无 plans 时，按周 planId 兜底重建）
+    const plansData = data.plans as Array<Record<string, unknown>> | undefined
+    if (Array.isArray(plansData)) {
+      for (const p of plansData) {
+        const pid = p.id ? String(p.id) : undefined
+        const existingPlan = pid ? await db.trainingPlan.findUnique({ where: { id: pid } }) : null
+        if (existingPlan) {
+          if (p.title) await db.trainingPlan.update({ where: { id: existingPlan.id }, data: { title: String(p.title) } })
+        } else {
+          await db.trainingPlan.create({
+            data: {
+              id: pid || undefined,
+              title: p.title ? String(p.title) : '我的训练计划',
+              goal: p.goal ? String(p.goal) : null,
+              targetRace: p.targetRace ? String(p.targetRace) : null,
+              active: p.active != null ? Boolean(p.active) : false,
+              startedAt: p.startedAt ? new Date(String(p.startedAt)) : new Date(),
+            },
+          })
+        }
+      }
+    }
+
     // 导入 Weeks + Sessions + Completions + Reviews
     const weeksData = data.weeks as Array<Record<string, unknown>> | undefined
     if (Array.isArray(weeksData)) {
@@ -63,8 +87,23 @@ export async function POST(req: NextRequest) {
         })
         if (existingWeek && importMode === 'merge') continue
 
+        // 确定周所属的训练周期
+        let planId: string | null = w.planId ? String(w.planId) : null
+        if (planId) {
+          const p = await db.trainingPlan.findUnique({ where: { id: planId } })
+          if (!p) {
+            await db.trainingPlan.create({
+              data: { id: planId, title: '我的训练计划', active: false },
+            })
+          }
+        } else {
+          const activePlan = await db.trainingPlan.findFirst({ where: { active: true }, orderBy: { createdAt: 'asc' } })
+          if (activePlan) planId = activePlan.id
+        }
+
         const newWeek = await db.trainingWeek.create({
           data: {
+            planId,
             weekStart,
             weekEnd: new Date(String(w.weekEnd)),
             weekNumber: w.weekNumber != null ? Number(w.weekNumber) : null,

@@ -5,6 +5,9 @@ import { db } from '@/lib/db'
 export async function GET() {
   try {
     const runner = await db.runner.findFirst()
+    const plans = await db.trainingPlan.findMany({
+      orderBy: { createdAt: 'asc' },
+    })
     const weeks = await db.trainingWeek.findMany({
       include: {
         sessions: {
@@ -26,6 +29,12 @@ export async function GET() {
     const exportData = {
       version: '1.0',
       exportedAt: new Date().toISOString(),
+      plans: plans.map(p => ({
+        ...p,
+        startedAt: p.startedAt.toISOString(),
+        createdAt: p.createdAt.toISOString(),
+        updatedAt: p.updatedAt.toISOString(),
+      })),
       runner,
       weeks: weeks.map(w => ({
         ...w,

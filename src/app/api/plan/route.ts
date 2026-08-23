@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { generateNextWeekPlan, generateInitialPlan, type SessionForReview, type RunnerProfile } from '@/lib/ai'
+import { nextMondayOf, findWeekStartingOn, getOrCreateActivePlan } from '@/lib/plan-utils'
 
 // 生成下周课表
 export async function POST(req: NextRequest) {
@@ -27,10 +28,28 @@ export async function POST(req: NextRequest) {
       notes: runner.notes,
     }
 
+    // 计算下周
+    const nextMonday = nextMondayOf()
+    const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)
+
+    // 防重复：下周课表已存在则直接复用，不再重复创建
+    const existingWeek = await findWeekStartingOn(nextMonday)
+    if (existingWeek) {
+      return NextResponse.json({
+        week: existingWeek,
+        plan: { phase: existingWeek.phase, weekGoal: existingWeek.goal, summary: existingWeek.summary },
+        reused: true,
+      })
+    }
+
+    // 唯一启用计划：全局同一时间只有一个 active=true
+    const activePlan = await getOrCreateActivePlan()
+
     let plan
     let weekNumber = 1
     let lastReview: string | null = null
     let lastWeekSessions: SessionForReview[] = []
+    let fromWeekFound = false
 
     if (fromWeekId) {
       const fromWeek = await db.trainingWeek.findUnique({
@@ -41,6 +60,7 @@ export async function POST(req: NextRequest) {
         },
       })
       if (fromWeek) {
+        fromWeekFound = true
         weekNumber = (fromWeek.weekNumber ?? 1) + 1
         lastReview = fromWeek.reviews[0]?.content ?? null
         lastWeekSessions = fromWeek.sessions.map((s) => ({
@@ -75,21 +95,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (!fromWeekFound) {
+      // 无续接周：按当前启用计划内已有周数继续，否则从第 1 周开始
+      const maxNum = await db.trainingWeek.aggregate({
+        where: { planId: activePlan.id },
+        _max: { weekNumber: true },
+      })
+      weekNumber = (maxNum._max.weekNumber ?? 0) + 1
+    }
+
     if (!plan) {
       plan = await generateInitialPlan(runnerProfile)
     }
 
-    // 创建下周
-    const today = new Date()
-    const day = today.getDay()
-    const nextMonday = new Date(today)
-    const diff = day === 0 ? 1 : 8 - day
-    nextMonday.setDate(today.getDate() + diff)
-    nextMonday.setHours(0, 0, 0, 0)
-    const nextSunday = new Date(nextMonday.getTime() + 6 * 86400000)
-
+    // 创建下周（归入当前启用计划）
     const newWeek = await db.trainingWeek.create({
       data: {
+        planId: activePlan.id,
         weekStart: nextMonday,
         weekEnd: nextSunday,
         weekNumber,

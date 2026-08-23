@@ -23,8 +23,12 @@ CREATE TABLE IF NOT EXISTS Runner (
   weeklyMileage INTEGER, notes TEXT, createdAt TEXT, updatedAt TEXT
 );
 CREATE TABLE IF NOT EXISTS TrainingWeek (
-  id TEXT PRIMARY KEY, weekStart TEXT, weekEnd TEXT, weekNumber INTEGER,
+  id TEXT PRIMARY KEY, planId TEXT, weekStart TEXT, weekEnd TEXT, weekNumber INTEGER,
   phase TEXT, goal TEXT, summary TEXT, createdAt TEXT, updatedAt TEXT
+);
+CREATE TABLE IF NOT EXISTS TrainingPlan (
+  id TEXT PRIMARY KEY, title TEXT, goal TEXT, targetRace TEXT,
+  active INTEGER DEFAULT 1, startedAt TEXT, createdAt TEXT, updatedAt TEXT
 );
 CREATE TABLE IF NOT EXISTS TrainingSession (
   id TEXT PRIMARY KEY, weekId TEXT, date TEXT, dayOfWeek INTEGER, type TEXT,
@@ -109,6 +113,50 @@ function idbSet(key: string, data: Uint8Array): Promise<void> {
 
 // ---------- 初始化 ----------
 
+/** 检查表是否存在 */
+function tableExists(name: string): boolean {
+  if (!db) return false
+  const res = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", [name])
+  return res.length > 0 && res[0].values.length > 0
+}
+
+/** 检查列是否存在 */
+function columnExists(table: string, column: string): boolean {
+  if (!db) return false
+  const res = db.exec(`PRAGMA table_info(${table})`)
+  if (!res.length) return false
+  const cols = res[0].columns
+  const nameIdx = cols.indexOf('name')
+  return res[0].values.some((row) => row[nameIdx] === column)
+}
+
+/**
+ * 旧版离线库升级（保证覆盖安装后旧数据保留且新功能可用）：
+ *  1. 补建 TrainingPlan 表（旧库没有）
+ *  2. TrainingWeek 补 planId 列（旧库没有）
+ *  3. 确保至少存在一个「当前启用」计划，并把无归属的遗留周归入其中
+ * 幂等：新库执行无副作用。
+ */
+function migrateSchema(): void {
+  if (!db) return
+  if (!tableExists('TrainingPlan')) {
+    db.run('CREATE TABLE IF NOT EXISTS TrainingPlan (id TEXT PRIMARY KEY, title TEXT, goal TEXT, targetRace TEXT, active INTEGER DEFAULT 1, startedAt TEXT, createdAt TEXT, updatedAt TEXT)')
+  }
+  if (!columnExists('TrainingWeek', 'planId')) {
+    db.run('ALTER TABLE TrainingWeek ADD COLUMN planId TEXT')
+  }
+  const planRows = all('SELECT * FROM TrainingPlan ORDER BY createdAt ASC')
+  if (planRows.length === 0) {
+    const now = nowIso()
+    run('INSERT INTO TrainingPlan (id, title, goal, targetRace, active, startedAt, createdAt, updatedAt) VALUES (?,?,?,?,1,?,?,?)', [uid(), '我的训练计划', null, null, now, now, now])
+  }
+  const orphan = get('SELECT COUNT(*) AS c FROM TrainingWeek WHERE planId IS NULL') as { c: number } | null
+  if (orphan && Number(orphan.c) > 0) {
+    const activePlan = get('SELECT * FROM TrainingPlan WHERE active = 1 ORDER BY createdAt ASC LIMIT 1') || get('SELECT * FROM TrainingPlan ORDER BY createdAt ASC LIMIT 1')
+    if (activePlan) run('UPDATE TrainingWeek SET planId = ? WHERE planId IS NULL', [activePlan.id])
+  }
+}
+
 export async function initOfflineDb(): Promise<Database> {
   if (db) return db
   const initSqlJs = (await import('sql.js')).default
@@ -121,8 +169,10 @@ export async function initOfflineDb(): Promise<Database> {
   } else {
     db = new SQL.Database()
     db.run(DDL)
-    await flushPersist()
   }
+  // 旧库升级（新建库幂等）；升级结果随 flushPersist 回写 IndexedDB
+  migrateSchema()
+  await flushPersist()
   return db
 }
 
