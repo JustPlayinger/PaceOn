@@ -17,9 +17,24 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // 显式使用固定 debug keystore（CI 与本地共用 ~/.android/debug.keystore，保证签名一致可覆盖安装）
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    signingConfigs {
+        debug {
+            def debugKs = file(System.getProperty("user.home") + "/.android/debug.keystore")
+            if (debugKs.exists()) {
+                storeFile debugKs
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
         }
     }
 }
