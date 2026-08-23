@@ -73,12 +73,13 @@ jobs:
 
       - name: Setup fixed signing keystore
         run: |
-          if [ -n "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" ]; then
-            mkdir -p ~/.android
-            printf '%s' "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" | base64 -d > ~/.android/debug.keystore
-            chmod 600 ~/.android/debug.keystore
-            echo "keystore 已写入，证书指纹："
-            keytool -list -keystore ~/.android/debug.keystore -storepass android 2>&1 | grep -iE "SHA256|别名|Alias" || true
+          VAR="${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}"
+          echo "1. base64 len: ${#VAR}"
+          if [ -n "$VAR" ]; then
+            printf '%s' "$VAR" | base64 -d > ~/.android/debug.keystore 2>/tmp/b64err || { cat /tmp/b64err; exit 1; }
+            echo "2. keystore size: $(stat -c%s ~/.android/debug.keystore)"
+            echo "3. keytool 结果："
+            keytool -list -keystore ~/.android/debug.keystore -storepass android 2>&1 | head -12 || true
           else
             echo "未配置固定 keystore，使用 runner 默认 debug 签名"
           fi
