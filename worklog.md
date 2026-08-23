@@ -938,6 +938,17 @@ Stage Summary:
 6. 跑鞋里程追踪（跑鞋寿命管理，预防伤病）
 
 Work Log:
+## 2026-08-23 · 修复 v1.2.1：AI 对话生成入口 + 手机顶部安全区
+- 修复：无课表时点击首页「AI 对话生成」只跳到 AI 点评但页面无任何按钮
+  - 根因：ReviewView 在 week 为空时直接返回「暂无课表」空态，未渲染对话入口
+  - 修复：无课表时直接渲染 ChatPlanView（对话式生成不依赖课表，fromWeekId 可选），带说明头
+- 修复：手机（Android 15+，targetSdk 36 强制 edge-to-edge）UI 顶到屏幕顶部/刘海区
+  - 新增 .pt-safe/.pb-safe（env(safe-area-inset-top/bottom)）到 globals.css
+  - 顶部 header 应用 pt-safe；底部导航已有 pb-safe
+  - StatusBar 背景色由 #10b981 改 #ffffff 与白色 header 协调（style DARK）
+- 版本升级 v1.2.1（APK versionCode 4 / versionName 1.2.1，桌面版 1.2.1）
+- 发布：tag v1.2.1 触发 CI 构建 APK + 创建 Release；EXE 本地产物上传需 GITHUB_TOKEN（脚本已更新 v1.2.1）
+
 - 读取 worklog.md 了解项目进展，确认前序 10 个 Task 已完成
 - QA 测试：
   - 数据库状态检查：2 周 / 14 节课 / 1 完成记录 / 2 AI review，数据正常

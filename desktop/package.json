@@ -1,6 +1,6 @@
 {
   "name": "paceon-desktop",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "PaceOn 智能长跑训练助手 - 桌面版",
   "author": "JustPlayinger",
   "main": "main.js",

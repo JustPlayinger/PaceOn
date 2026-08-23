@@ -21,13 +21,13 @@ import urllib.parse
 
 TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 REPO = "JustPlayinger/PaceOn"
-TAG = os.environ.get("PACEON_RELEASE_TAG", "v1.2.0")
+TAG = os.environ.get("PACEON_RELEASE_TAG", "v1.2.1")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 ASSETS = [
-    (os.path.join(ROOT, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk"), "PaceOn-v1.2.0.apk"),
-    (os.path.join(ROOT, "desktop", "release", "PaceOn Setup 1.2.0.exe"), "PaceOn-Setup-1.2.0.exe"),
-    (os.path.join(ROOT, "desktop", "release", "PaceOn 1.2.0.exe"), "PaceOn-Portable-1.2.0.exe"),
+    (os.path.join(ROOT, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk"), "PaceOn-v1.2.1.apk"),
+    (os.path.join(ROOT, "desktop", "release", "PaceOn Setup 1.2.1.exe"), "PaceOn-Setup-1.2.1.exe"),
+    (os.path.join(ROOT, "desktop", "release", "PaceOn 1.2.1.exe"), "PaceOn-Portable-1.2.1.exe"),
 ]
 
 

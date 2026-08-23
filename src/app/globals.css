@@ -119,4 +119,11 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* 顶部安全区（状态栏/刘海屏）：仅在全屏 WebView（APK）中生效，桌面/浏览器为 0 */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }

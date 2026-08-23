@@ -123,9 +123,20 @@ export function ReviewViewImpl({ week, runner, refresh }: Props) {
 
   if (!week) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-12 text-center">
-        <BrainCircuit className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-        <p className="text-slate-500">暂无课表</p>
+      <div className="space-y-5">
+        {/* 无课表：直接进入对话式生成 */}
+        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-emerald-50/40 p-5 shadow-sm">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
+              <MessageCircle className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">AI 对话生成课表</h2>
+              <p className="text-xs text-slate-500">还没有训练课表？和 AI 教练聊一聊，生成你的第一份训练计划</p>
+            </div>
+          </div>
+          <ChatPlanView currentWeek={week} onPlanGenerated={refresh} />
+        </div>
       </div>
     )
   }
