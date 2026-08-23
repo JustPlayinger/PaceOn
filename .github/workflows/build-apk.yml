@@ -75,9 +75,10 @@ jobs:
         run: |
           if [ -n "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" ]; then
             mkdir -p ~/.android
-            echo "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" | base64 -d > ~/.android/debug.keystore
+            printf '%s' "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" | base64 -d > ~/.android/debug.keystore
             chmod 600 ~/.android/debug.keystore
-            echo "已使用固定 debug keystore 签名（与 v1.0.0 一致）"
+            echo "keystore 已写入，证书指纹："
+            keytool -list -keystore ~/.android/debug.keystore -storepass android 2>&1 | grep -iE "SHA256|别名|Alias" || true
           else
             echo "未配置固定 keystore，使用 runner 默认 debug 签名"
           fi
