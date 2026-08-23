@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-一键上传桌面版安装包到 GitHub Release。
-
-适用场景：本地网络对超大文件（>100MB）上传受限时，换网络后运行本脚本即可上传。
+一键上传 APK + Windows 桌面版到 GitHub Release。
 
 用法：
   1. 设置 GitHub token：set GITHUB_TOKEN=你的token
   2. python scripts/upload-release-asset.py
 
-说明：会读取 desktop/release/PaceOn Setup 1.0.0.exe 并上传到仓库的最新 Release。
+说明：
+  - 默认上传到 tag v1.2.0 的 Release（可用环境变量 PACEON_RELEASE_TAG 覆盖）
+  - 上传 APK + NSIS 安装器 + 便携版 EXE 三个资产
+  - 幂等：同名资产已存在会先删除再上传
 """
 import json
 import os
@@ -20,9 +21,14 @@ import urllib.parse
 
 TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 REPO = "JustPlayinger/PaceOn"
-TAG = os.environ.get("PACEON_RELEASE_TAG", "v1.0.0")
-ASSET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "desktop", "release", "PaceOn Setup 1.0.0.exe")
-NAME = "PaceOn-Setup-1.0.0.exe"
+TAG = os.environ.get("PACEON_RELEASE_TAG", "v1.2.0")
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+ASSETS = [
+    (os.path.join(ROOT, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk"), "PaceOn-v1.2.0.apk"),
+    (os.path.join(ROOT, "desktop", "release", "PaceOn Setup 1.2.0.exe"), "PaceOn-Setup-1.2.0.exe"),
+    (os.path.join(ROOT, "desktop", "release", "PaceOn 1.2.0.exe"), "PaceOn-Portable-1.2.0.exe"),
+]
 
 
 def api(method, url, data=None, headers=None, timeout=60):
@@ -42,44 +48,51 @@ def api(method, url, data=None, headers=None, timeout=60):
 
 def main():
     if not TOKEN:
-        print("请先设置环境变量 GITHUB_TOKEN（你的 GitHub Personal Access Token）")
+        print("请先设置环境变量 GITHUB_TOKEN（你的 GitHub Personal Access Token，需 repo 权限）")
         print("  Windows: set GITHUB_TOKEN=ghp_xxx")
         print("  macOS/Linux: export GITHUB_TOKEN=ghp_xxx")
         sys.exit(1)
-    if not os.path.exists(ASSET):
-        print(f"未找到安装包：{ASSET}")
-        print("请先运行 scripts/build-desktop.ps1 构建桌面版")
-        sys.exit(1)
 
-    # 查询 Release
     rel = api("GET", f"https://api.github.com/repos/{REPO}/releases/tags/{TAG}")
     print(f"Release: {rel['tag_name']}  id={rel['id']}")
+    existing = {a["name"]: a["id"] for a in rel.get("assets", [])}
 
-    # 上传
-    size = os.path.getsize(ASSET)
-    print(f"上传 {NAME}（{size/1024/1024:.1f} MB）...")
-    with open(ASSET, "rb") as f:
-        data = f.read()
-    url = f"https://uploads.github.com/repos/{REPO}/releases/{rel['id']}/assets?name={urllib.parse.quote(NAME)}"
+    for path, name in ASSETS:
+        if not os.path.exists(path):
+            print(f"跳过（文件不存在）：{name}")
+            continue
+        if name in existing:
+            api("DELETE", f"https://api.github.com/repos/{REPO}/releases/assets/{existing[name]}")
+            print(f"已删除旧资产 {name}")
 
-    for attempt in range(5):
-        try:
-            r = api(
-                "POST",
-                url,
-                data=data,
-                headers={"Content-Type": "application/octet-stream"},
-                timeout=3600,
-            )
-            print(f"✅ 上传成功：{r['name']}  state={r['state']}")
-            print(f"下载地址：{r['browser_download_url']}")
-            return
-        except Exception as e:
-            print(f"  第 {attempt + 1} 次尝试失败：{e}")
-            time.sleep(15)
-    print("上传失败。请检查网络后重试，或确认 token 有 repo 权限。")
-    sys.exit(1)
+        size = os.path.getsize(path)
+        print(f"上传 {name}（{size / 1024 / 1024:.1f} MB）...")
+        with open(path, "rb") as f:
+            data = f.read()
+        url = f"https://uploads.github.com/repos/{REPO}/releases/{rel['id']}/assets?name={urllib.parse.quote(name)}"
+
+        for attempt in range(5):
+            try:
+                r = api(
+                    "POST",
+                    url,
+                    data=data,
+                    headers={"Content-Type": "application/octet-stream"},
+                    timeout=3600,
+                )
+                print(f"✅ 上传成功：{r['name']}  state={r['state']}")
+                print(f"   下载地址：{r['browser_download_url']}")
+                break
+            except Exception as e:
+                print(f"  第 {attempt + 1} 次尝试失败：{e}")
+                time.sleep(15)
+        else:
+            print(f"上传失败：{name}")
+            sys.exit(1)
+
+    print("全部资产上传完成。")
 
 
 if __name__ == "__main__":
     main()
+
