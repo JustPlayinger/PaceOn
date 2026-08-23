@@ -91,7 +91,11 @@ jobs:
       - name: Verify APK signing cert
         run: |
           APKSIGNER=$(ls $ANDROID_HOME/build-tools/*/apksigner | tail -1)
+          echo "=== 本次构建 (v1.1.0) ==="
           "$APKSIGNER" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk
+          echo "=== 线上 v1.0.0（对比）==="
+          curl -sL -o /tmp/v100.apk https://github.com/JustPlayinger/PaceOn/releases/download/v1.0.0/PaceOn-v1.0.0.apk
+          "$APKSIGNER" verify --print-certs /tmp/v100.apk || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
