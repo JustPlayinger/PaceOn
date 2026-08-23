@@ -6,6 +6,9 @@ on:
     branches: [main]
     tags: ['v*']
 
+permissions:
+  contents: write
+
 concurrency:
   group: apk-build
   cancel-in-progress: true
