@@ -514,6 +514,18 @@ Work Log:
 - 发布 GitHub Release v1.1.0（CI 自动构建 app-debug.apk 11.5MB）
 - ci: build-apk.yml 增加 tags: ['v*'] 触发 + permissions: contents: write（修复 403）
 
+## 2026-08-23 · 修复 APK 无法覆盖安装（版本冲突）
+- 现象：用户手机装 v1.0.0 后，下载 v1.1.0 安装报「版本冲突」
+- 根因：CI 每次构建用临时 runner 的 debug.keystore（每次签名不同）；且 v1.0.0 的签名密钥（证书 ac37639a）不在本机，与本地 keystore（证书 94:90:E7）不一致
+- 修复：
+  - 本地 debug.keystore 存入 GitHub Secret（ANDROID_DEBUG_KEYSTORE_BASE64，libsodium sealed box）
+  - build.gradle 显式指定 debug 签名使用 ~/.android/debug.keystore（绕过 AGP 默认查找）
+  - workflow 构建前写入 keystore（mkdir + printf | base64 -d，修复 ~/.android 目录缺失导致的写入失败）
+  - versionCode 1→2，versionName 1.0→1.1.0
+  - CI 用 apksigner 打印签名证书：v1.1.0 证书 9490e7a4… = 本地 keystore 94:90:E7（已验证一致）
+- 结果：v1.1.0 起签名固定；v1.0.0 密钥缺失，用户需卸载旧版 + 导出/导入数据升级一次，此后升级不再冲突
+
+
     - 输入区：目标赛事选择 + 时:分:秒时间输入 + 5 个快捷预设（全马330/400/半马145/10K50/5K25）
     - 各距离预估成绩卡（Riegel 公式）
     - 8 个配速区间卡片（专属配色，含配速/范围/心率区间/说明）
