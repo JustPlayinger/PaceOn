@@ -501,6 +501,19 @@ Work Log:
     - 各区间采用业界通用系数（恢复1.35/轻松1.25/长跑1.20/马拉松1.06/节奏1.02/阈值1.0/间歇0.95/重复0.88）
     - 各距离预估时间（5K/10K/半马/全马 互推）
   - 新增组件 src/components/views/pace-calculator-view.tsx：
+
+## 2026-08-23 · 训练周期体系 + 3 个用户反馈 Bug 修复 + v1.1.0 发布
+- 新功能：训练周期（TrainingPlan）实体 + TrainingWeek.planId
+  - 生成课表（/api/plan、/api/chat-plan、/api/templates）防重复：命中已有「下周」直接复用，不再重复建周
+  - 同一时间仅一个「当前启用」计划；新周自动归入启用计划
+  - 历史归档页按周期分组折叠展示，支持删除周期 / 删除单周（含周详情页）
+- Bug 修复：离线模式「AI 单次训练分析」按钮恒灰无法点击
+  - 根因：离线 GET /api/sessions/[id]/detail 的 completion 嵌在 session 内部、顶层缺失，按钮 disabled 恒真；POST 返回 content 而前端读 analysis
+  - 修复：GET 响应对齐 server（顶层 completion + curves），POST 返回 analysis
+- 数据保留：离线 SQLite 自动迁移（补 TrainingPlan 表 + planId 列 + 遗留周归默认周期），覆盖安装不丢数据
+- 发布 GitHub Release v1.1.0（CI 自动构建 app-debug.apk 11.5MB）
+- ci: build-apk.yml 增加 tags: ['v*'] 触发 + permissions: contents: write（修复 403）
+
     - 输入区：目标赛事选择 + 时:分:秒时间输入 + 5 个快捷预设（全马330/400/半马145/10K50/5K25）
     - 各距离预估成绩卡（Riegel 公式）
     - 8 个配速区间卡片（专属配色，含配速/范围/心率区间/说明）
