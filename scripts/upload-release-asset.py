@@ -8,7 +8,7 @@
   2. python scripts/upload-release-asset.py
 
 说明：
-  - 默认上传到 tag v1.2.0 的 Release（可用环境变量 PACEON_RELEASE_TAG 覆盖）
+  - 默认上传到 tag v1.2.2 的 Release（可用环境变量 PACEON_RELEASE_TAG 覆盖）
   - 上传 APK + NSIS 安装器 + 便携版 EXE 三个资产
   - 幂等：同名资产已存在会先删除再上传
 """
@@ -21,13 +21,13 @@ import urllib.parse
 
 TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 REPO = "JustPlayinger/PaceOn"
-TAG = os.environ.get("PACEON_RELEASE_TAG", "v1.2.1")
+TAG = os.environ.get("PACEON_RELEASE_TAG", "v1.2.2")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 ASSETS = [
-    (os.path.join(ROOT, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk"), "PaceOn-v1.2.1.apk"),
-    (os.path.join(ROOT, "desktop", "release", "PaceOn Setup 1.2.1.exe"), "PaceOn-Setup-1.2.1.exe"),
-    (os.path.join(ROOT, "desktop", "release", "PaceOn 1.2.1.exe"), "PaceOn-Portable-1.2.1.exe"),
+    (os.path.join(ROOT, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk"), "PaceOn-v1.2.2.apk"),
+    (os.path.join(ROOT, "desktop", "release", "PaceOn Setup 1.2.1.exe"), "PaceOn-Setup-1.2.2.exe"),
+    (os.path.join(ROOT, "desktop", "release", "PaceOn 1.2.1.exe"), "PaceOn-Portable-1.2.2.exe"),
 ]
 
 
