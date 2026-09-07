@@ -13,6 +13,28 @@ AI 驱动的长跑训练指导系统，集成 OCR/视觉识别（训练 App 长�
 
 ---
 
+## 2026-09-07 · v1.2.3：删除周期保留日历数据 + 对话直改课表(actions) + AI 提示语自然化
+
+### 需求
+1. 删除训练周期/周时，训练日历中的已完成数据应保留，与课表解耦、不被连带删除
+2. 修改/新建/删除课表都可直接向 AI 提出，由 AI 自动化执行
+3. AI 对话页提示语不要太“AI 味”，自然一点
+
+### 改动
+- **删除保留（需求1）**：
+  - 在线 src/lib/preserve-week-logs.ts + 离线 core.ts deleteWeek：删除周/周期前先把有 completion 的训练转存为独立 TrainingLog(source=preserved)，再删课表；按(日期+距离+时长)防重复
+  - weeks/[id] 与 plans/[id] 删除路由双端接入
+- **对话直改课表（需求2）**：
+  - 对话系统提示（在线/离线）支持输出 actions：set(安排/改某天训练)/clear(取消某天)/goal(改本周目标)，AI 在回复中先说明、前端“就这样改”按钮确认后执行
+  - 执行器：离线 src/lib/offline/handlers/week-actions.ts + 在线 src/lib/apply-week-actions.ts；路由 /api/weeks/[id]/ai-actions（在线 route + 离线 register）
+  - 已完成训练天受保护：不覆盖不删除，数据保留在日历
+  - chat 请求带 weekId 时注入本周课表摘要，让教练“知道现状”再改
+  - ChatPlanView：消息气泡展示可执行操作 + 「就这样改 / 先不了」，执行后自动刷新课表
+- **文案自然化（需求3）**：离线/在线 CHAT_SYSTEM_PROMPT 重写为口语教练风格；对话开场/重置/提示语口语化；标题改“和教练聊聊排课”
+
+### 验证
+- next build（Turbopack）通过；v1.2.3 桌面 EXE（Setup/Portable）本地构建完成并推送 tag 触发 CI APK
+
 ## 2026-09-07 · v1.2.2-dev：识图交给 AI + 补录记录可编辑 + 本周课表重建 replan + 课表差异化
 
 ### 需求（用户反馈）
