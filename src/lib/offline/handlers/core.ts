@@ -24,8 +24,41 @@ export function weekFull(id: string): Record<string, unknown> | null {
   return { ...w, sessions: sessionsOf(id), reviews: all('SELECT * FROM AIReview WHERE weekId = ? ORDER BY createdAt DESC', [id]) }
 }
 
-/** 删除一个训练周（含其训练课、完成记录、点评） */
+/** 删除训练周前，将该周已完成训练保留为独立历史记录（日历数据与课表解耦，不被级联删除） */
+function preserveCompletedSessionsAsLogs(weekId: string): void {
+  for (const s of all('SELECT * FROM TrainingSession WHERE weekId = ?', [weekId])) {
+    const c = get('SELECT * FROM TrainingCompletion WHERE sessionId = ?', [s.id]) || null
+    if (!c) continue
+    const dup = get('SELECT id FROM TrainingLog WHERE date = ? AND duration IS ? AND distance IS ? AND source = ? LIMIT 1', [s.date, c.duration ?? null, c.distance ?? null, 'preserved'])
+    if (dup) continue
+    insertLog({
+      date: String(s.date),
+      distance: (c.distance as number | null) ?? null,
+      duration: (c.duration as number | null) ?? null,
+      avgPace: (c.avgPace as string | null) ?? null,
+      avgPaceSec: (c.avgPaceSec as number | null) ?? null,
+      avgHr: (c.avgHr as number | null) ?? null,
+      maxHr: (c.maxHr as number | null) ?? null,
+      elevation: (c.elevation as number | null) ?? null,
+      cadence: (c.cadence as number | null) ?? null,
+      calories: (c.calories as number | null) ?? null,
+      weather: (c.weather as string | null) ?? null,
+      temperature: (c.temperature as number | null) ?? null,
+      rpe: (c.rpe as number | null) ?? null,
+      feeling: (c.feeling as number | null) ?? null,
+      feelingNote: (c.feelingNote as string | null) ?? null,
+      imageDataUrl: (c.imageDataUrl as string | null) ?? null,
+      rawExtract: (c.rawExtract as string | null) ?? null,
+      notes: (c.notes as string | null) ?? null,
+      shoeId: (c.shoeId as string | null) ?? null,
+      source: 'preserved',
+    })
+  }
+}
+
+/** 删除一个训练周（含其训练课、完成记录、点评；已完成训练会先保留为独立记录） */
 function deleteWeek(id: string): void {
+  preserveCompletedSessionsAsLogs(id)
   run('DELETE FROM TrainingCompletion WHERE sessionId IN (SELECT id FROM TrainingSession WHERE weekId = ?)', [id])
   run('DELETE FROM TrainingSession WHERE weekId = ?', [id])
   run('DELETE FROM AIReview WHERE weekId = ?', [id])

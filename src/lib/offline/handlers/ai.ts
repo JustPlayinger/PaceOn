@@ -7,6 +7,7 @@ import { ocrImageBrowser, toDataUrl } from '../ocr'
 import { getDeepseekConfig } from '../config'
 import { callDeepseekApi, extractTrainingDataFromImage, OCR_PARSE_PROMPT, parseExtractedFields, generateWeeklyReview, generateNextWeekPlan, generateInitialPlan, generatePlanFromChat, chatWithCoach, generateMicroAdjust, analyzeSingleSession, type RunnerProfile, type SessionForReview, type RecentTrainingLog } from '../ai'
 import { replanWeek } from './replan'
+import { applyWeekActions } from './week-actions'
 import type { ApiRequest, Handler } from '../types'
 import { json, methodErr, nextMondayOf, findWeekStartingOn, getOrCreateActivePlan, weekFull } from './core'
 
@@ -158,13 +159,35 @@ const planHandler: Handler = async (req) => {
   return json({ week: { ...week, sessions }, plan })
 }
 
+const DAY_TXT = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+function weekBrief(weekId: string): string {
+  const w = get('SELECT * FROM TrainingWeek WHERE id = ?', [weekId])
+  if (!w) return ''
+  const rows = all('SELECT * FROM TrainingSession WHERE weekId = ? ORDER BY "order" ASC', [weekId])
+  const parts = rows.map((r) => DAY_TXT[r.dayOfWeek as number] + (r.type === 'rest' ? ' 休息' : ' ' + String(r.type) + (r.plannedDistance != null ? ' ' + Number(r.plannedDistance) + 'km' : '')))
+  return '第 ' + String(w.weekNumber ?? '?') + ' 周：' + (parts.length ? parts.join('；') : '（空）')
+}
+
+const weekActionsHandler: Handler = async (req) => {
+  const id = req.params.id
+  const { actions } = (req.body || {}) as { actions?: unknown[] }
+  if (!Array.isArray(actions)) return json({ error: '缺少 actions' }, 400)
+  return json(applyWeekActions(id, actions as never[]))
+}
+
 const chatPlanHandler: Handler = async (req) => {
   const { action } = (req.body || {}) as { action?: string }
   const runner = runnerProfile()
   if (action === 'chat') {
-    const { message, history } = (req.body || {}) as { message?: string; history?: { role: string; content: string }[] }
+    const { message, history, weekId } = (req.body || {}) as { message?: string; history?: { role: string; content: string }[]; weekId?: string }
     if (!message) return json({ error: '请输入消息' }, 400)
-    return json(await chatWithCoach(runner, (history || []).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })), message))
+    let msg = message
+    if (weekId) {
+      const brief = weekBrief(weekId)
+      msg = '（本周课表：' + brief + '。我下面的话是想对课表做的事，帮我判断/直接改）\n\n' + msg
+    }
+    return json(await chatWithCoach(runner, (history || []).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })), msg))
   }
   if (action === 'generate') {
     const { history, fromWeekId, replanWeekId, fixedRestDays } = (req.body || {}) as { history?: { role: string; content: string }[]; fromWeekId?: string; replanWeekId?: string; fixedRestDays?: number[] }
@@ -328,6 +351,7 @@ export function registerAiHandlers(map: Map<string, Handler>): void {
   map.set('POST /api/plan', planHandler)
   map.set('POST /api/chat-plan', chatPlanHandler)
   map.set('POST /api/adjust', adjustHandler)
+  map.set('POST /api/weeks/[id]/ai-actions', weekActionsHandler)
   map.set('GET /api/sessions/[id]/detail', sessionDetailAiHandler)
   map.set('POST /api/sessions/[id]/detail', sessionDetailAiHandler)
   map.set('GET /api/data/export', dataExportHandler)

@@ -47,11 +47,22 @@ export async function POST(req: NextRequest) {
     }))
 
     if (action === 'chat') {
-      // 对话模式
-      const { message, history } = body as { message: string; history: ChatMessage[] }
+      // 对话模式（可带 weekId，让教练能看到本周课表并直接帮你改）
+      const { message, history, weekId } = body as { message: string; history: ChatMessage[]; weekId?: string }
       if (!message) return NextResponse.json({ error: '请输入消息' }, { status: 400 })
 
-      const result = await chatWithCoach(runnerProfile, history || [], message)
+      let msg = message
+      if (weekId) {
+        const week = await db.trainingWeek.findUnique({ where: { id: weekId }, include: { sessions: { orderBy: { order: 'asc' } } } })
+        if (week) {
+          const DAY_TXT = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+          const parts = (week.sessions || []).map((x) => DAY_TXT[x.dayOfWeek] + (x.type === 'rest' ? ' 休息' : ' ' + x.type + (x.plannedDistance != null ? ' ' + Number(x.plannedDistance) + 'km' : '')))
+          const brief = '第 ' + (week.weekNumber ?? '?') + ' 周：' + (parts.length ? parts.join('；') : '（空）')
+          msg = '（本周课表：' + brief + '。我下面的话是想对课表做的事，帮我判断/直接改）\n\n' + msg
+        }
+      }
+
+      const result = await chatWithCoach(runnerProfile, history || [], msg)
       return NextResponse.json(result)
     }
 

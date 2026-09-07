@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { preserveWeekLogs } from '@/lib/preserve-week-logs'
 
 // 切换训练周期启用状态（全局仅一个启用）
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -34,6 +35,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     if (!plan) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const weekIds = (await db.trainingWeek.findMany({ where: { planId: id }, select: { id: true } })).map((w) => w.id)
+    // 先把已完成训练保留为独立历史记录，再删除课表（日历数据不被级联删除）
+    await preserveWeekLogs(weekIds)
     if (weekIds.length > 0) {
       await db.trainingCompletion.deleteMany({ where: { session: { weekId: { in: weekIds } } } })
       await db.trainingSession.deleteMany({ where: { weekId: { in: weekIds } } })

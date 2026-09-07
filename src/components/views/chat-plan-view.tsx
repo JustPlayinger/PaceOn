@@ -14,7 +14,10 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   ready?: boolean
+  actions?: AiAction[]
 }
+
+type AiAction = { op: 'set' | 'clear' | 'goal'; day?: number; type?: string; km?: number | null; pace?: string | null; note?: string | null; text?: string | null }
 
 interface Props {
   currentWeek: Week | null
@@ -22,6 +25,18 @@ interface Props {
   /** 重建目标周：传入后“生成课表”重建该周（保留已完成天 + 今天休息），而非生成下周 */
   replanWeek?: Week | null
   onCancelReplan?: () => void
+}
+
+function actionText(a: AiAction): string {
+  const dow = a.day
+  const d = dow !== undefined && dow >= 0 && dow <= 6 ? DAY_LABELS[dow] : ''
+  if (a.op === 'goal') return '本周目标改成：' + (a.text || '')
+  if (a.op === 'clear') return d + ' 的训练安排取消'
+  const labelMap: Record<string, string> = { easy: '轻松跑', tempo: '节奏跑', interval: '间歇跑', long: '长距离', recovery: '恢复跑', cross: '交叉训练', rest: '休息' }
+  const type = a.type || 'easy'
+  const label = type === 'rest' ? '休息' : (labelMap[type] || type)
+  const km = typeof a.km === 'number' && a.km ? ' ' + a.km + 'km' : ''
+  return d + ' 改成' + label + km
 }
 
 export function ChatPlanView({ currentWeek, onPlanGenerated, replanWeek, onCancelReplan }: Props) {
@@ -34,13 +49,14 @@ export function ChatPlanView({ currentWeek, onPlanGenerated, replanWeek, onCance
   const [ready, setReady] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // 初始问候语
+  // 初始问候语（口语化）
+  const makeIntro = () => isReplan
+    ? '嗨，我是你的跑步教练 🏃。这周的课表想重排没问题——已经跑掉的训练会留着，今天（' + DAY_LABELS[new Date().getDay()] + '）按你说的休息。\n\n跟我说说对剩下几天有什么想法：强度想高一点还是低一点、想重点练什么、最近身体累不累？'
+    : '嗨，我是你的跑步教练 🏃。想排一份合适的周课表，先跟我聊聊：最近跑得怎么样？有没有受伤、酸痛、特别累？接下来想重点练什么？\n\n想起什么说什么，我会边聊边问你几个细节，不赶时间 😄'
   useEffect(() => {
-    setMessages([{
-      role: 'assistant',
-      content: `你好！我是你的 AI 跑步教练 🏃‍♂️\n\n在制定训练课表前，我需要了解你的具体情况，这样才能为你量身定制最适合的计划。\n\n请先告诉我：**你最近的状态如何？有没有伤病、停跑、或者身体不适的情况？**\n\n（你可以像和真人教练聊天一样自由描述，我会根据你的回答继续了解必要的信息）`,
-    }])
-  }, [])
+    setMessages([{ role: 'assistant', content: makeIntro() }])
+    setReady(false)
+  }, [replanWeek])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -73,6 +89,7 @@ export function ChatPlanView({ currentWeek, onPlanGenerated, replanWeek, onCance
         role: 'assistant',
         content: data.reply,
         ready: data.ready,
+        actions: Array.isArray(data.actions) ? data.actions as AiAction[] : undefined,
       }
       setMessages([...newMessages, assistantMsg])
       if (data.ready) {
@@ -111,10 +128,41 @@ export function ChatPlanView({ currentWeek, onPlanGenerated, replanWeek, onCance
     }
   }
 
+  const [dismissed, setDismissed] = useState<number[]>([])
+  const [applying, setApplying] = useState(false)
+  const targetWeekId = currentWeek?.id || replanWeek?.id
+
+  const handleDismiss = (idx: number) => setDismissed(prev => [...prev, idx])
+
+  const handleApplyActions = async (actions: AiAction[], idx: number) => {
+    if (!targetWeekId) {
+      toast({ title: '还没有可改的课表', description: '先点“生成课表”创建一份，再让我帮你调整', variant: 'destructive' })
+      return
+    }
+    setApplying(true)
+    try {
+      const res = await fetch('/api/weeks/' + targetWeekId + '/ai-actions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actions }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      const lines = [...(data.done || []), ...(data.skipped || [])]
+      toast({ title: '✅ 课表已按建议调整', description: (lines.slice(0, 2).join('；') || '已处理') })
+      setDismissed(prev => [...prev, idx])
+      onPlanGenerated()
+    } catch (e) {
+      toast({ title: '调整失败', description: (e as Error).message, variant: 'destructive' })
+    } finally {
+      setApplying(false)
+    }
+  }
+
   const handleReset = () => {
     setMessages([{
       role: 'assistant',
-      content: `好的，让我们重新开始。请告诉我：**你最近的状态如何？有没有伤病、停跑、或者身体不适的情况？**`,
+      content: makeIntro(),
     }])
     setReady(false)
   }
@@ -145,8 +193,8 @@ export function ChatPlanView({ currentWeek, onPlanGenerated, replanWeek, onCance
               <MessageCircle className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900">对话式课表生成</h2>
-              <p className="text-xs text-slate-500">与 AI 教练自由对话 · 量身定制个性化训练计划</p>
+              <h2 className="text-lg font-bold text-slate-900">和教练聊聊排课</h2>
+              <p className="text-xs text-slate-500">把你的想法说出来，剩下的我来安排</p>
             </div>
           </div>
           {ready && (
@@ -191,6 +239,22 @@ export function ChatPlanView({ currentWeek, onPlanGenerated, replanWeek, onCance
                   {m.ready && (
                     <div className="mt-2 pt-2 border-t border-emerald-200 text-[11px] text-emerald-700 flex items-center gap-1">
                       <CheckCircle2 className="h-3 w-3" />信息已收集完整，可生成课表
+                    </div>
+                  )}
+                  {m.role === 'assistant' && m.actions && m.actions.length > 0 && !dismissed.includes(i) && (
+                    <div className="mt-2.5 rounded-xl border border-emerald-200 bg-white p-2.5">
+                      <div className="text-xs font-medium text-emerald-800 mb-1.5">我可以帮你把课表改成这样：</div>
+                      <ul className="space-y-1">
+                        {m.actions.map((a, ai) => (
+                          <li key={ai} className="text-xs text-slate-700">· {actionText(a)}</li>
+                        ))}
+                      </ul>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Button size="sm" className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 gap-1" disabled={applying} onClick={() => handleApplyActions(m.actions!, i)}>
+                          {applying ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}就这样改
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => handleDismiss(i)}>先不了</Button>
+                      </div>
                     </div>
                   )}
                 </div>

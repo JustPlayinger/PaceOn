@@ -199,38 +199,61 @@ ${PLAN_PROMPT}`
   try { return parsePlanResult(await callDeepseekApi(userPrompt)) }
   catch { return buildPlan(runner, runner.weeklyMileage ?? 40, 'base', 1) }
 }
-const CHAT_SYSTEM_PROMPT = `你是一位资深的长跑教练，正在通过对话了解跑者的具体情况，以便为其制定个性化训练课表。你要像真人教练一样，尽可能全面地收集信息、持续追问，直到掌握足够细节。
+const CHAT_SYSTEM_PROMPT = `你是个带过不少业余跑者的教练，正陪一个想认真训练的朋友聊天。目标是把他的情况摸清楚，好排出真正适合他的周课表。说话别端着，像平时聊天那样自然，一次只问一两句，别把一堆问题一次全抛出来。
 
-== 需要收集的信息（跑者档案已有的可跳过，但对话中新的信息优先） ==
-1. 身体与伤病：当前是否有伤病、疼痛、疲劳？最近是否停跑？停跑多久？恢复训练多久了？有无慢性疾病？
-2. 训练目标：目标赛事（5K/10K/半马/全马）、目标日期、目标成绩；或近期想达到的水平
-3. 当前水平：最近一次长跑的距离与配速、当前周跑量、每周训练次数、跑步年限
-4. 时间安排：每周能训练几天？每次大概多久？偏好的时间段？有无固定休息日？
-5. 训练偏好：喜欢/抵触的训练类型（间歇/节奏/长距离/力量）？有无健身房？
-6. 恢复与生活：睡眠情况、饮食、工作压力、久坐或体力劳动？
-7. 环境因素：高原/高温/严寒/多坡道？常在什么场地跑？
-8. 历史参考：最近一次比赛成绩？有没有心率手表/跑步手表？
+聊天中自然了解一下这些（档案里有的就别重复问）：
+1. 身体：最近有没有伤、酸、累？停跑过吗？复跑多久了？有没有老毛病
+2. 目标：想跑什么（5K/10K/半马/全马），大概什么时候，想跑到多少
+3. 水平：最近一次长跑多长、什么配速，现在一周跑多少、几次，跑几年了
+4. 时间：一周有空练几天？一次能抽多久？习惯几点？有没有固定想休息的日子
+5. 偏好：喜欢练什么、烦什么；有没有健身房
+6. 状态：睡眠怎么样、工作累不累、平时坐得多不多
+7. 环境：常在哪跑，有没有坡、高温、高原这些特殊情况
+8. 其他：最近一次比赛成绩？有没有手表能看心率？
 
-== 对话要求 ==
-- 每轮只问 1-2 个关键问题，根据跑者回答深入追问，不一次性轰炸
-- 跑者已回答的信息不再重复问，只追问缺失的维度
-- 至少收集 6-8 个维度的信息后才算信息充分
-- 语气亲切专业，像真人教练聊天
-- 信息齐全后，回复以 "[READY]" 开头表示可以生成课表了
-- 若跑者信息与档案冲突，以对话中的新信息为准
+规矩：
+- 他答过的就别再揪着问，只补还没聊到的
+- 大致聊到 6-8 个方面就够了，这时在回复开头加 [READY]，表示可以排课表了
+- 他刚说的和档案里不一致时，以他说的为准
 
-请以 JSON 格式返回（只返回 JSON）：
-{
-  "reply": "你的回复内容（对话式，亲切专业）",
-  "ready": false 或 true,
-  "questions": ["问题1", "问题2"]（ready=true 时为空数组）
-}`
+如果他想让你直接改本周课表（比如“把周三改成休息”“周二加一次5公里轻松跑”“把周日长跑删掉”“这周想练一次间歇”），你可以在回复里带一个 actions 数组，教练执行前会跟他确认。格式：
+[{ "op": "set", "day": 数字(1=周一…6=周六,0=周日), "type": "easy|tempo|interval|long|recovery|cross|rest", "km": 公里数或null, "pace": "配速如5:30/km"或null, "note": "一句话说明，如"改成轻松跑8公里"" }, { "op": "clear", "day": 数字 }, { "op": "goal", "text": "新的本周目标" }]
+这轮没有明确的改课表要求就省略 actions。有 actions 时，reply 里用自然的话告诉他你打算怎么改。
 
-function parseChatResult(content: string): { reply: string; ready: boolean; questions: string[] } {
+回复固定用 JSON（不要带其它文字）：
+{"reply": "你这一轮说的话", "ready": false, "questions": ["可以追问的一个问题"], "actions": []}
+ready 为 true 时 questions 给空数组`
+
+export interface AiChatAction {
+  op: 'set' | 'clear' | 'goal'
+  day?: number
+  type?: string
+  km?: number | null
+  pace?: string | null
+  note?: string | null
+  text?: string | null
+}
+
+export function normalizeActions(raw: unknown): AiChatAction[] {
+  if (!Array.isArray(raw)) return []
+  const out: AiChatAction[] = []
+  for (const a of raw) {
+    if (!a || typeof a !== 'object') continue
+    const o = a as Record<string, unknown>
+    const op = o.op
+    if (op !== 'set' && op !== 'clear' && op !== 'goal') continue
+    const item: AiChatAction = { op, day: typeof o.day === 'number' ? o.day : undefined, type: typeof o.type === 'string' ? o.type : undefined, km: typeof o.km === 'number' ? o.km : null, pace: typeof o.pace === 'string' ? o.pace : null, note: typeof o.note === 'string' ? o.note : null, text: typeof o.text === 'string' ? o.text : null }
+    if (item.op !== 'goal' && (item.day === undefined || item.day < 0 || item.day > 6)) continue
+    out.push(item)
+  }
+  return out
+}
+
+function parseChatResult(content: string): { reply: string; ready: boolean; questions: string[]; actions: AiChatAction[] } {
   const parsed = parseJsonData(content)
-  if (parsed) return { reply: typeof parsed.reply === 'string' ? parsed.reply : content, ready: Boolean(parsed.ready), questions: Array.isArray(parsed.questions) ? parsed.questions : [] }
+  if (parsed) return { reply: typeof parsed.reply === 'string' ? parsed.reply : content, ready: Boolean(parsed.ready), questions: Array.isArray(parsed.questions) ? parsed.questions : [], actions: normalizeActions(parsed.actions) }
   const ready = content.includes('[READY]')
-  return { reply: content.replace('[READY]', '').trim(), ready, questions: [] }
+  return { reply: content.replace('[READY]', '').trim(), ready, questions: [], actions: [] }
 }
 
 export async function chatWithCoach(runner: RunnerProfile | null, history: ChatMessage[], currentMessage: string): Promise<{ reply: string; ready: boolean; questions: string[] }> {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { preserveWeekLogs } from '@/lib/preserve-week-logs'
 
 // 获取单个训练周详情
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -43,6 +44,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params
+    // 先保留该周已完成训练为独立历史记录，再删除课表（日历数据不被级联删除）
+    await preserveWeekLogs([id])
     await db.trainingWeek.delete({ where: { id } })
     return NextResponse.json({ success: true })
   } catch (e) {
