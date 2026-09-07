@@ -7,9 +7,47 @@ AI 驱动的长跑训练指导系统，集成 OCR/视觉识别（训练 App 长�
 - Next.js 16 (App Router) + TypeScript 5
 - Prisma ORM + SQLite
 - Tailwind CSS 4 + shadcn/ui
-- DeepSeek API（deepseek-chat）+ DsBridge 多模态网关 + tesseract.js OCR
+- DeepSeek API（deepseek-chat / deepseek-v4-flash-vision-exp 视觉模型）+ tesseract.js OCR（离线兜底）
 - Electron（桌面版）/ Capacitor + GitHub Actions（Android APK）
 - Recharts (折线图可视化) / react-markdown (AI 输出渲染)
+
+---
+
+## 2026-09-07 · v1.2.2-dev：识图交给 AI + 补录记录可编辑 + 本周课表重建 replan + 课表差异化
+
+### 需求（用户反馈）
+1. DeepSeek 已支持识图模型 → 识图交给 AI，不必本地完成
+2. 一天可能有多条运动记录；同一天需同时支持「修改现有记录」与「新增记录」
+3. 补录若提前保存，之后补充备注无法保存（根因：补录只有 POST/DELETE，无更新接口）
+4. 每周课表高度重复 → 课表需考虑跑者状态与近期训练水平，及时反馈用户诉求
+5. 生成课表时能与用户对话收集诉求/感受
+6. 版本更新后保留 app 内已有数据
+7. 本周课表（今天周一）重复不满意 → 需灵活重建：保持今天休息日，删除不满意的旧安排
+
+### 改动
+- **识图交给 AI（问题1）**
+  - DeepSeek 官方新增多模态模型 deepseek-v4-flash-vision-exp，user content 支持 image_url（base64 data URL）
+  - 在线 src/lib/ai.ts callDeepseekApi：useVision 直连官方 vision 模型（可 DEEPSEEK_VISION_API_URL/MODEL 覆盖），移除默认本地 DsBridge 网关
+  - 离线 src/lib/offline/ai.ts：新增 VLM_EXTRACT_PROMPT + parseVlmResult + extractTrainingDataFromImage（直连视觉模型，支持折线/分段配速/跑姿等字段）
+  - 离线 handlers/ai.ts extractHandler：视觉优先 → 本地 OCR（tesseract.js）兜底
+- **补录记录可编辑（问题2/3）**
+  - 新增 PATCH /api/log/[id]（在线 Prisma update；离线 db.ts updateLog + core.ts handler + 注册）
+  - 新增 GET /api/log/[id]（编辑回填完整字段）
+  - 日历详情面板补录记录增加「编辑」按钮 → 跳转上传页预填日期与全量数据（含备注/体感）→ 保存走 PATCH
+  - upload-view log 模式支持 editingLogId：PATCH 更新而非重复 POST（修复提前保存后补不了备注的 bug）
+- **本周课表重建 replan（问题7，按确认方案：保留已完成训练天 + 今天休息，其余天 AI 重排）**
+  - 离线新模块 src/lib/offline/handlers/replan.ts（sql.js 版）+ 在线新模块 src/lib/replan.ts（Prisma 版）
+  - /api/plan 与 /api/chat-plan 支持 body { replanWeekId, fixedRestDays }：保留有完成记录的天、默认今天休息、其余天按 generateNextWeekPlan / generatePlanFromChat 重排
+  - 已完成训练并入「近期实际训练」上下文供 AI 评估疲劳强度；对话记录写入 AIReview(chat_plan)
+  - review-view 增加「重建本周课表（保留已完成 + 今天休息）」按钮 → ChatPlanView replan 模式（横幅说明保留策略）
+- **课表差异化/个性化（问题4/5）**
+  - generateNextWeekPlan prompt（在线+离线）新增：与上周课表类型轮换/日期错峰、不照搬固定模板、将近期体感疲劳反馈落实为强度跑量动态调整
+  - 对话式生成渠道（ChatPlanView）保留，重建本周也走对话以收集用户诉求
+- **数据保留（问题6）**：未改任何表结构 / DB_KEY / IndexedDB 版本；migrateSchema 幂等；覆盖安装 APK 保留 IndexedDB 数据（升级前可在「数据管理」导出备份）
+
+### 验证
+- next build（Turbopack）通过，无类型错误
+- 建议本机 npm run dev 冒烟：日历「编辑」补录（PATCH）、识别按钮（视觉模型）、review「重建本周」对话重排
 
 ---
 

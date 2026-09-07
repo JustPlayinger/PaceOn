@@ -144,10 +144,11 @@ const OCR_PARSE_PROMPT = `你是一个专业的跑步训练数据分析助手。
 
 async function callDeepseekApi(prompt: string, useVision = false, imageBase64?: string, mimeType?: string): Promise<string> {
   const apiKey = process.env.DEEPSEEK_API_KEY
-  // 文本请求 → DeepSeek 官方 API；视觉/识图请求 → 本地 DsBridge 多模态网关（DS 无多模态，由网关转 OCR/视觉模型）
+  // 文本请求 → DeepSeek 官方 API；视觉/识图请求 → DeepSeek 官方多模态模型 deepseek-v4-flash-vision-exp
+  // （可通过 DEEPSEEK_VISION_API_URL / DEEPSEEK_VISION_MODEL 覆盖视觉端地址与模型名）
   const apiUrl = process.env.DEEPSEEK_API_URL || 'https://api.deepseek.com/v1/chat/completions'
-  const visionApiUrl = process.env.DEEPSEEK_VISION_API_URL || 'http://127.0.0.1:8901/v1/chat/completions'
-  const url = useVision ? visionApiUrl : apiUrl
+  const url = useVision ? (process.env.DEEPSEEK_VISION_API_URL || apiUrl) : apiUrl
+  const model = useVision ? (process.env.DEEPSEEK_VISION_MODEL || 'deepseek-v4-flash-vision-exp') : (process.env.DEEPSEEK_MODEL || 'deepseek-chat')
   const timeoutMs = useVision ? 120_000 : 90_000
 
   if (!apiKey) {
@@ -182,10 +183,10 @@ async function callDeepseekApi(prompt: string, useVision = false, imageBase64?: 
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model,
         messages,
         temperature: 0.7,
-        max_tokens: 2000,
+        max_tokens: useVision ? 4000 : 2000,
       }),
       signal: controller.signal,
     })
@@ -215,14 +216,14 @@ export async function extractTrainingDataFromImage(
   }
 
   try {
-    // 路径①：优先尝试 DsBridge 本地多模态网关（图片→OCR/视觉模型→文本→DeepSeek）
-    // DeepSeek 官方 API 无多模态能力，故视觉请求转发到网关（地址由 DEEPSEEK_VISION_API_URL 配置）
+    // 路径①：优先调用 DeepSeek 官方多模态模型 deepseek-v4-flash-vision-exp 直接从图片识别
+    // （失败时自动降级到下方内置 OCR 兜底）
     const response = await callDeepseekApi(EXTRACT_PROMPT, true, imageBase64, mimeType)
     const parsed = parseExtractedData(response)
     if (parsed.distance != null || parsed.duration != null || parsed.avgPace != null || parsed.rawText) {
       return {
         ...parsed,
-        notes: parsed.notes || '识别方式：DsBridge 多模态网关（OCR/视觉模型 → DeepSeek）',
+        notes: parsed.notes || '识别方式：DeepSeek 视觉模型 deepseek-v4-flash-vision-exp',
       }
     }
     console.warn('[Extract] DsBridge 返回空数据，尝试内置 OCR 兜底')
@@ -656,6 +657,8 @@ ${lastReview || '无'}
 5. 周跑量参考跑者档案 weeklyMileage，渐进增加
 6. 每节课给出明确的训练内容描述（如热身、主课组数与配速、冷身）
 7. 结合"近期实际训练记录"评估跑者当前状态与疲劳：若近期跑量偏高或体感差，适当降低下周强度与跑量；若近期训练不足，从合理强度起步
+8. 课表必须与"上周训练完成情况"明显不同：训练类型轮换、错开强度课与长距离的日期顺序，绝不照搬固定模板或与上周雷同；无上周对比时也要变换常规套路，避免每周课表高度重复
+9. 近期记录/点评中体现的跑者主观感受（notes、体感、疲劳、伤病）务必落实到强度与跑量的动态调整
 
 请严格按以下 JSON 格式返回（只返回 JSON）：
 {

@@ -341,6 +341,32 @@ export function insertLog(data: Partial<TrainingLogRow>): TrainingLogRow {
 }
 
 /** 删除一条历史训练记录 */
+/** 更新一条历史训练记录（含备注等字段） */
+export function updateLog(id: string, data: Partial<TrainingLogRow>): TrainingLogRow | null {
+  const cols: Record<string, string> = {
+    date: 'date', distance: 'distance', duration: 'duration', avgPace: 'avgPace', avgPaceSec: 'avgPaceSec',
+    avgHr: 'avgHr', maxHr: 'maxHr', elevation: 'elevation', cadence: 'cadence', calories: 'calories',
+    weather: 'weather', temperature: 'temperature', rpe: 'rpe', feeling: 'feeling', feelingNote: 'feelingNote',
+    imageDataUrl: 'imageDataUrl', rawExtract: 'rawExtract', notes: 'notes', shoeId: 'shoeId', source: 'source',
+  }
+  const fields: string[] = []
+  const vals: (string | number | null)[] = []
+  for (const [k, col] of Object.entries(cols)) {
+    const v = data[k as keyof TrainingLogRow]
+    if (v !== undefined) {
+      fields.push(col + ' = ?')
+      vals.push(v as string | number | null)
+    }
+  }
+  const now = nowIso()
+  if (fields.length === 0) {
+    run('UPDATE TrainingLog SET updatedAt = ? WHERE id = ?', [now, id])
+  } else {
+    run('UPDATE TrainingLog SET ' + fields.join(', ') + ', updatedAt = ? WHERE id = ?', [...vals, now, id])
+  }
+  return get<TrainingLogRow>('SELECT * FROM TrainingLog WHERE id = ?', [id])
+}
+
 export function deleteLog(id: string): void {
   run('DELETE FROM TrainingLog WHERE id = ?', [id])
 }

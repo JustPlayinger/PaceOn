@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { generateNextWeekPlan, generateInitialPlan, type SessionForReview, type RunnerProfile, type RecentTrainingLog } from '@/lib/ai'
 import { nextMondayOf, findWeekStartingOn, getOrCreateActivePlan } from '@/lib/plan-utils'
+import { replanWeek } from '@/lib/replan'
 
 // 生成下周课表
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { fromWeekId } = body as { fromWeekId?: string }
+    const { fromWeekId, replanWeekId, fixedRestDays } = body as { fromWeekId?: string; replanWeekId?: string; fixedRestDays?: number[] }
 
     const runner = await db.runner.findFirst()
     if (!runner) return NextResponse.json({ error: 'Runner profile not found. 请先在「跑者档案」中填写信息。' }, { status: 400 })
@@ -29,6 +30,14 @@ export async function POST(req: NextRequest) {
     }
 
     // 近期实际训练记录（补录历史），供 AI 参考跑者当前状态
+    // 重建指定周：保留已完成天 + 固定休息天（默认今天），其余由 AI 重排
+    if (replanWeekId) {
+      const target = await db.trainingWeek.findUnique({ where: { id: replanWeekId } })
+      if (!target) return NextResponse.json({ error: '未找到该周课表' }, { status: 404 })
+      const replanned = await replanWeek(replanWeekId, runnerProfile, { fixedRestDays })
+      return NextResponse.json(replanned)
+    }
+
     const recentLogs: RecentTrainingLog[] = (await db.trainingLog.findMany({
       where: { date: { gte: new Date(Date.now() - 13 * 86400000) } },
       orderBy: { date: 'asc' },

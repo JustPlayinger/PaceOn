@@ -29,6 +29,7 @@ export function ReviewViewImpl({ week, runner, refresh }: Props) {
   const [adjustNote, setAdjustNote] = useState('')
   const [showAdjust, setShowAdjust] = useState(false)
   const [chatMode, setChatMode] = useState(false)
+  const [replanMode, setReplanMode] = useState(false)
 
   const loadReviews = useCallback(async () => {
     if (!week) return
@@ -171,7 +172,7 @@ export function ReviewViewImpl({ week, runner, refresh }: Props) {
             {reviewing ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />分析中...</> : <><BrainCircuit className="h-4 w-4 mr-1.5" />生成本周点评</>}
           </Button>
           <Button
-            onClick={() => setChatMode(!chatMode)}
+            onClick={() => { setChatMode(!chatMode); if (!chatMode) setReplanMode(false) }}
             variant={chatMode ? 'default' : 'outline'}
             className={`h-11 gap-1.5 ${chatMode ? 'bg-emerald-600 hover:bg-emerald-700' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'}`}
           >
@@ -194,9 +195,26 @@ export function ReviewViewImpl({ week, runner, refresh }: Props) {
           </Button>
         </div>
 
+        {/* 重建本周课表：保留已完成训练天 + 今天休息，其余按对话诉求重排 */}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button
+            onClick={() => { const next = !replanMode; setReplanMode(next); if (next) setChatMode(true) }}
+            variant={replanMode ? 'default' : 'outline'}
+            className={`h-9 text-xs gap-1.5 ${replanMode ? 'bg-violet-600 hover:bg-violet-700 text-white' : 'border-violet-200 text-violet-700 hover:bg-violet-50'}`}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />{replanMode ? '取消重建' : '重建本周课表（保留已完成 + 今天休息）'}
+          </Button>
+          <span className="text-[11px] text-slate-400">对本周课表不满意？与 AI 对话说明期望后重新生成</span>
+        </div>
+
         {/* 对话式课表生成 */}
         {chatMode && (
-          <ChatPlanView currentWeek={week} onPlanGenerated={() => { setChatMode(false); refresh() }} />
+          <ChatPlanView
+            currentWeek={week}
+            replanWeek={replanMode ? week : null}
+            onPlanGenerated={() => { setChatMode(false); setReplanMode(false); refresh() }}
+            onCancelReplan={() => setReplanMode(false)}
+          />
         )}
 
         {!hasAnyCompletion && (

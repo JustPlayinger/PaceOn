@@ -20,6 +20,9 @@ interface Props {
   setSelectedSessionId: (id: string | null) => void
   refresh: () => void
   logDate?: string | null
+  /** 要编辑的既有补录记录（传入后进入“补录历史训练”模式预填，保存走 PATCH 更新） */
+  editLog?: (Record<string, unknown> & { id?: string }) | null
+  onEditDone?: () => void
 }
 
 interface ExtractedData {
@@ -54,7 +57,8 @@ interface ExtractedData {
   notes: string | null
 }
 
-export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, refresh, logDate: logDateProp }: Props) {
+export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, refresh, logDate: logDateProp, editLog, onEditDone }: Props) {
+  const [editingLogId, setEditingLogId] = useState<string | null>(null)
   const { toast } = useToast()
   const [imageBase64, setImageBase64] = useState<string | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
@@ -77,6 +81,39 @@ export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, 
       setLogDate(logDateProp)
     }
   }, [logDateProp])
+
+  // 编辑既有补录记录：预填表单，保存走 PATCH
+  useEffect(() => {
+    if (editLog) {
+      setMode('log')
+      setEditingLogId(String(editLog.id))
+      setLogDate(String((editLog.date as string) || new Date().toISOString()).slice(0, 10))
+      const g = (v: unknown) => (v === null || v === undefined ? '' : String(v))
+      const numG = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? String(v) : '')
+      setForm({
+        distance: numG(editLog.distance),
+        duration: editLog.duration != null ? String(Math.round((editLog.duration as number) / 60)) : '',
+        avgPace: g(editLog.avgPace),
+        avgHr: numG(editLog.avgHr),
+        maxHr: numG(editLog.maxHr),
+        elevation: numG(editLog.elevation),
+        cadence: numG(editLog.cadence),
+        calories: numG(editLog.calories),
+        weather: g(editLog.weather) || '晴',
+        temperature: numG(editLog.temperature),
+        rpe: typeof editLog.rpe === 'number' ? (editLog.rpe as number) : 5,
+        feeling: typeof editLog.feeling === 'number' ? (editLog.feeling as number) : 6,
+        feelingNote: g(editLog.feelingNote),
+        notes: g(editLog.notes),
+        shoeId: g(editLog.shoeId),
+      })
+      const img = (editLog.imageDataUrl as string | null) || null
+      setImageBase64(img)
+      setImagePreview(img)
+    } else {
+      setEditingLogId(null)
+    }
+  }, [editLog])
 
   // 表单字段
   const [form, setForm] = useState({
@@ -245,17 +282,19 @@ export function UploadViewImpl({ week, selectedSessionId, setSelectedSessionId, 
           rawExtract: extracted ? JSON.stringify(extracted) : null,
           source: 'manual',
         }
-        const res = await fetch('/api/log', {
-          method: 'POST',
+        const res = await fetch(editingLogId ? `/api/log/${editingLogId}` : '/api/log', {
+          method: editingLogId ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
         const data = await res.json()
         if (data.error) throw new Error(data.error)
-        toast({ title: '✅ 已补录训练', description: `${logDate} · ${form.distance || 0}km` })
+        toast({ title: editingLogId ? '✅ 已更新补录记录' : '✅ 已补录训练', description: `${logDate} · ${form.distance || 0}km` })
         setExtracted(null)
         setImagePreview(null)
         setImageBase64(null)
+        setEditingLogId(null)
+        onEditDone?.()
         refresh()
       } catch (e) {
         toast({ title: '补录失败', description: (e as Error).message, variant: 'destructive' })

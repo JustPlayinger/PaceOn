@@ -1,7 +1,7 @@
 /**
  * 离线 API - 核心 CRUD handler（runner / weeks / sessions / shoes / recovery / records / templates / seed）
  */
-import { all, get, run, uid, nowIso, insertLog, deleteLog, logsBetween, logsRecentDays, type TrainingLogRow } from '../db'
+import { all, get, run, uid, nowIso, insertLog, updateLog, deleteLog, logsBetween, logsRecentDays, type TrainingLogRow } from '../db'
 import type { ApiRequest, Handler } from '../types'
 import { TRAINING_TEMPLATES } from '@/lib/templates'
 
@@ -443,6 +443,16 @@ const logHandler: Handler = async (req) => {
 
 const logDetailHandler: Handler = async (req) => {
   const id = req.params.id
+  if (req.method === 'GET') {
+    const log = get<TrainingLogRow>('SELECT * FROM TrainingLog WHERE id = ?', [id])
+    if (!log) return json({ error: '记录不存在' }, 404)
+    return json({ log })
+  }
+  if (req.method === 'PATCH') {
+    const b = (req.body || {}) as Record<string, unknown>
+    const log = updateLog(id, b as Partial<TrainingLogRow>)
+    return json({ log })
+  }
   if (req.method === 'DELETE') {
     deleteLog(id)
     return json({ success: true })
@@ -460,7 +470,9 @@ export function registerCoreHandlers(map: Map<string, Handler>): void {
   map.set('POST /api/seed', seedHandler)
   map.set('GET /api/log', logHandler)
   map.set('POST /api/log', logHandler)
+  map.set('GET /api/log/[id]', logDetailHandler)
   map.set('DELETE /api/log/[id]', logDetailHandler)
+  map.set('PATCH /api/log/[id]', logDetailHandler)
   map.set('GET /api/plans', plansHandler)
   map.set('POST /api/plans', plansHandler)
   map.set('GET /api/plans/[id]', planDetailHandler)

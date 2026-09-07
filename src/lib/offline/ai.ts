@@ -175,7 +175,9 @@ ${lastReview || '无'}
 
 ${PLAN_PROMPT}
 
-补充要求：结合"近期实际训练记录"评估跑者当前状态与疲劳，若近期跑量偏高或体感差适当降低下周强度与跑量，训练不足则从合理强度起步。`
+补充要求：结合"近期实际训练记录"评估跑者当前状态与疲劳，若近期跑量偏高或体感差适当降低下周强度与跑量，训练不足则从合理强度起步。
+
+差异化要求：课表必须与上周（lastWeekSessions 中体现的类型/强度/日期安排）明显不同——训练类型轮换、错开强度课与长距离的日期与顺序，绝不照搬固定模板或与上周雷同；若无法对比上周，请变换常规套路，避免把轻松跑/质量课/长跑固定在同一星期顺序重复出现。记录中带 notes/体感的反馈是跑者主观感受，必须落实为强度与跑量的动态调整。`
   try { return parsePlanResult(await callDeepseekApi(userPrompt)) }
   catch {
     const lastDistance = lastWeekSessions.reduce((sum, s) => sum + (typeof s.completion?.distance === 'number' ? s.completion.distance : 0), 0)
@@ -273,4 +275,112 @@ export async function generateMicroAdjust(runner: RunnerProfile, remainingSessio
 export async function analyzeSingleSession(runner: RunnerProfile, planned: Record<string, unknown>, actual: Record<string, unknown>): Promise<string> {
   const userPrompt = `请为以下单次训练做深度分析。\n\n== 跑者档案 ==\n${JSON.stringify(runner, null, 2)}\n\n== 计划训练 ==\n${JSON.stringify(planned, null, 2)}\n\n== 实际完成数据 ==\n${JSON.stringify(actual, null, 2)}\n\n请用 markdown 格式，使用 ## 标题分节：\n## 训练评分（0-100）\n## 配速分析\n## 心率分析\n## 跑姿与效率（若有数据）\n## 主观体感\n## 训练建议\n\n直接返回 markdown 内容，不要包裹代码块。`
   try { return await callDeepseekApi(userPrompt) } catch { return '暂无分析结果。' }
+}
+
+// ---------- 视觉识图（DeepSeek 多模态模型直接识别，不再依赖本地 OCR） ----------
+
+const VLM_EXTRACT_PROMPT = `请仔细识别这张跑步 App（Keep / 悦跑圈 / Garmin / Strava / 华为运动健康 / 咕咚等）训练记录截图。这类长图通常包含基础统计 + 心率/配速/步频/海拔折线图 + 跑姿 + 分段配速 + 心率区间等。
+
+请尽量准确地识别以下数据，并严格按 JSON 格式返回（只返回 JSON，不要任何额外文字）：
+{
+  "distance": 距离(km, 数字, 无则null),
+  "duration": 时长(秒, 数字, 如32分15秒=1935, 无则null),
+  "avgPace": 平均配速(字符串如 "5:30/km", 无则null),
+  "avgPaceSec": 平均配速秒/km(数字如330, 无则null),
+  "avgHr": 平均心率(数字, 无则null),
+  "maxHr": 最大心率(数字, 无则null),
+  "elevation": 累计爬升(米, 数字, 无则null),
+  "descent": 累计下降(米, 数字, 无则null),
+  "cadence": 平均步频(数字, 无则null),
+  "strideLength": 步幅(厘米, 数字, 无则null),
+  "steps": 总步数(数字, 无则null),
+  "calories": 卡路里(数字, 无则null),
+  "avgSpeed": 平均速度(km/h, 数字, 无则null),
+  "vo2max": 最大摄氧量(数字, 无则null),
+  "hrRecovery": 心率恢复(bpm, 数字, 无则null),
+  "groundContactTime": 触地时间(毫秒, 数字, 无则null),
+  "verticalOscillation": 垂直振幅(厘米, 数字, 无则null),
+  "leftRightBalance": 左右平衡(左脚百分比数字, 无则null),
+  "weather": 天气(字符串, 无则null),
+  "temperature": 温度(摄氏度数字, 无则null),
+  "paceCurve": 配速曲线数组(秒/km, 从折线图采样15-25点, 无则null),
+  "hrCurve": 心率曲线数组(bpm, 采样15-25点, 无则null),
+  "elevationCurve": 海拔曲线数组(米, 采样15-25点, 无则null),
+  "cadenceCurve": 步频曲线数组(spm, 采样15-25点, 无则null),
+  "splitPaces": 分段配速(每公里秒数数组, 无则null),
+  "curveAnalysis": 折线图趋势分析(字符串, 无则null),
+  "appSource": 来源App名称(字符串, 无则null),
+  "rawText": 图中关键原始数字文本(字符串, 便于校对)
+}
+注意：数字字段必须是数字类型而非字符串，不得编造，看不清的填 null；配速 "M:SS/km" 的 avgPaceSec = M*60+SS。`
+
+export const VISION_MODEL_DEFAULT = 'deepseek-v4-flash-vision-exp'
+
+export function getVisionModel(): string {
+  try {
+    const m = typeof localStorage !== 'undefined' ? localStorage.getItem('paceon-ds-vision-model') : null
+    return m || VISION_MODEL_DEFAULT
+  } catch { return VISION_MODEL_DEFAULT }
+}
+
+function parseVlmResult(content: string): Record<string, unknown> {
+  const parsed = parseJsonData(content) || {}
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const arr = (v: unknown): number[] | null => (Array.isArray(v) ? (v.filter((x) => typeof x === 'number') as number[]) : null)
+  const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+  let avgPace: string | null = str(parsed.avgPace)
+  let avgPaceSec: number | null = num(parsed.avgPaceSec)
+  if (avgPace && avgPaceSec == null) {
+    const m = avgPace.match(/(\d{1,2})\s*[:\u2019\u2032]\s*(\d{2})/)
+    if (m) avgPaceSec = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+  }
+  return {
+    distance: num(parsed.distance), duration: num(parsed.duration), avgPace, avgPaceSec,
+    avgHr: num(parsed.avgHr), maxHr: num(parsed.maxHr), elevation: num(parsed.elevation), descent: num(parsed.descent),
+    cadence: num(parsed.cadence), strideLength: num(parsed.strideLength), steps: num(parsed.steps), calories: num(parsed.calories),
+    avgSpeed: num(parsed.avgSpeed), vo2max: num(parsed.vo2max), hrRecovery: num(parsed.hrRecovery),
+    groundContactTime: num(parsed.groundContactTime), verticalOscillation: num(parsed.verticalOscillation),
+    leftRightBalance: num(parsed.leftRightBalance), weather: str(parsed.weather), temperature: num(parsed.temperature),
+    paceCurve: arr(parsed.paceCurve), hrCurve: arr(parsed.hrCurve), elevationCurve: arr(parsed.elevationCurve),
+    cadenceCurve: arr(parsed.cadenceCurve), splitPaces: arr(parsed.splitPaces),
+    curveAnalysis: str(parsed.curveAnalysis), appSource: str(parsed.appSource),
+    rawText: str(parsed.rawText) || '', notes: '识别方式：DeepSeek 视觉模型 ' + getVisionModel(),
+  }
+}
+
+/** 视觉识图：直连 DeepSeek 多模态模型（deepseek-v4-flash-vision-exp），失败时由调用方降级本地 OCR */
+export async function extractTrainingDataFromImage(imageBase64: string, mimeType = 'image/jpeg'): Promise<Record<string, unknown>> {
+  const cfg = getDeepseekConfig()
+  if (!cfg.apiKey) throw new Error('未配置 DeepSeek API Key')
+  const url = cfg.apiUrl || 'https://api.deepseek.com/v1/chat/completions'
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 120000)
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.apiKey },
+      body: JSON.stringify({
+        model: getVisionModel(),
+        messages: [
+          { role: 'system', content: '你是一位专业的跑步训练数据分析助手，擅长从跑步 App 训练长图中精确提取数据。请用中文回答。' },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: VLM_EXTRACT_PROMPT },
+              { type: 'image_url', image_url: { url: 'data:' + (mimeType || 'image/jpeg') + ';base64,' + imageBase64, detail: 'high' } },
+            ],
+          },
+        ],
+        temperature: 0.2,
+        max_tokens: 3000,
+      }),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const err = await res.text().catch(() => '')
+      throw new Error('DeepSeek API 错误 ' + res.status + ': ' + err.slice(0, 200))
+    }
+    const data = await res.json()
+    return parseVlmResult(data.choices?.[0]?.message?.content || '')
+  } finally { clearTimeout(timer) }
 }

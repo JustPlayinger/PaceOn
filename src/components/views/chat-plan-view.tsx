@@ -2,11 +2,12 @@
 
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { MessageCircle, Send, Sparkles, Loader2, CheckCircle2, RotateCcw, Info } from 'lucide-react'
+import { MessageCircle, Send, Sparkles, Loader2, CheckCircle2, RotateCcw, Info, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
+import { DAY_LABELS } from '@/lib/training'
 import type { Week } from './types'
 
 interface Message {
@@ -18,9 +19,13 @@ interface Message {
 interface Props {
   currentWeek: Week | null
   onPlanGenerated: () => void
+  /** 重建目标周：传入后“生成课表”重建该周（保留已完成天 + 今天休息），而非生成下周 */
+  replanWeek?: Week | null
+  onCancelReplan?: () => void
 }
 
-export function ChatPlanView({ currentWeek, onPlanGenerated }: Props) {
+export function ChatPlanView({ currentWeek, onPlanGenerated, replanWeek, onCancelReplan }: Props) {
+  const isReplan = Boolean(replanWeek?.id)
   const { toast } = useToast()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -86,16 +91,16 @@ export function ChatPlanView({ currentWeek, onPlanGenerated }: Props) {
       const res = await fetch('/api/chat-plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'generate',
-          history: messages.map(m => ({ role: m.role, content: m.content })),
-          fromWeekId: currentWeek?.id,
-        }),
+        body: JSON.stringify(
+          isReplan
+            ? { action: 'generate', history: messages.map(m => ({ role: m.role, content: m.content })), replanWeekId: replanWeek!.id, fixedRestDays: [new Date().getDay()] }
+            : { action: 'generate', history: messages.map(m => ({ role: m.role, content: m.content })), fromWeekId: currentWeek?.id }
+        ),
       })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
       toast({
-        title: '✅ 个性化课表已生成',
+        title: isReplan ? '✅ 本周课表已重建' : '✅ 个性化课表已生成',
         description: `${data.week.sessions?.length || 0} 节训练课 · ${data.plan.weekGoal?.slice(0, 40) || ''}`,
       })
       onPlanGenerated()
@@ -116,6 +121,22 @@ export function ChatPlanView({ currentWeek, onPlanGenerated }: Props) {
 
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
+      {isReplan && replanWeek && (
+        <div className="rounded-2xl border border-violet-200 bg-violet-50/80 p-4">
+          <div className="flex items-start gap-3">
+            <RefreshCw className="h-5 w-5 text-violet-600 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-violet-800">正在重建本周课表</div>
+              <p className="text-xs text-violet-600 mt-1 leading-relaxed">
+                已保留 <b>{replanWeek.sessions.filter(s => s.status === 'completed').length}</b> 节已完成训练；今天（{DAY_LABELS[new Date().getDay()]}）固定休息；其余训练日按你的对话诉求重新设计。
+              </p>
+            </div>
+            {onCancelReplan && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-violet-600 hover:bg-violet-100 shrink-0" onClick={onCancelReplan}>取消重建</Button>
+            )}
+          </div>
+        </div>
+      )}
       {/* 头部 */}
       <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-emerald-50/40 p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">

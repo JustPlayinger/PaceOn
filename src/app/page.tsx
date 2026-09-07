@@ -57,6 +57,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [uploadLogDate, setUploadLogDate] = useState<string | null>(null)
+  const [editLog, setEditLog] = useState<(Record<string, unknown> & { id?: string }) | null>(null)
   const { toast } = useToast()
 
   const loadRunner = useCallback(async () => {
@@ -197,12 +198,28 @@ export default function Home() {
         ) : (
           <>
             {tab === 'dashboard' && <DashboardView week={currentWeek} runner={runner} onUploadClick={(sid) => { setSelectedSessionId(sid); setTab('upload') }} onOpenTemplates={() => setTab('templates')} onOpenReview={() => setTab('review')} refresh={refresh} />}
-            {tab === 'upload' && <UploadView week={currentWeek} selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} refresh={refresh} logDate={uploadLogDate} />}
+            {tab === 'upload' && <UploadView week={currentWeek} selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} refresh={refresh} logDate={uploadLogDate} editLog={editLog} onEditDone={() => setEditLog(null)} />}
             {tab === 'review' && <ReviewView week={currentWeek} runner={runner} refresh={refresh} />}
             {tab === 'trends' && <TrendsView />}
             {tab === 'load' && <LoadView />}
             {tab === 'compare' && <CompareView />}
-            {tab === 'calendar' && <CalendarView onAddLog={(date) => { setUploadLogDate(date); setTab('upload') }} />}
+            {tab === 'calendar' && (
+              <CalendarView
+                onAddLog={(date) => { setEditLog(null); setUploadLogDate(date); setTab('upload') }}
+                onEditLog={async (id) => {
+                  try {
+                    const res = await fetch(`/api/log/${id}`)
+                    const d = await res.json()
+                    if (d.error) throw new Error(d.error)
+                    setUploadLogDate(null)
+                    setEditLog(d.log || null)
+                    setTab('upload')
+                  } catch (e) {
+                    toast({ title: '加载补录记录失败', description: (e as Error).message, variant: 'destructive' })
+                  }
+                }}
+              />
+            )}
             {tab === 'goal' && <GoalView />}
             {tab === 'templates' && <TemplatesView onApplied={refresh} />}
             {tab === 'shoes' && <ShoesView />}
@@ -747,14 +764,16 @@ function FocusStat({ label, value, unit }: { label: string; value: string; unit:
 }
 
 // 占位组件 - 直接转发到独立视图实现
-function UploadView({ week, selectedSessionId, setSelectedSessionId, refresh, logDate }: {
+function UploadView({ week, selectedSessionId, setSelectedSessionId, refresh, logDate, editLog, onEditDone }: {
   week: Week | null
   selectedSessionId: string | null
   setSelectedSessionId: (id: string | null) => void
   refresh: () => void
   logDate?: string | null
+  editLog?: (Record<string, unknown> & { id?: string }) | null
+  onEditDone?: () => void
 }) {
-  return <UploadViewImpl week={week} selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} refresh={refresh} logDate={logDate} />
+  return <UploadViewImpl week={week} selectedSessionId={selectedSessionId} setSelectedSessionId={setSelectedSessionId} refresh={refresh} logDate={logDate} editLog={editLog} onEditDone={onEditDone} />
 }
 
 function ReviewView({ week, runner, refresh }: { week: Week | null; runner: Runner | null; refresh: () => void }) {

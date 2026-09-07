@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Calendar, ChevronLeft, ChevronRight, TrendingUp, Activity, Flame, Mountain, Loader2, Footprints, Plus } from 'lucide-react'
+import { Calendar, ChevronLeft, ChevronRight, TrendingUp, Activity, Flame, Mountain, Loader2, Footprints, Plus, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
@@ -68,7 +68,7 @@ function getDayColor(day: DayData | undefined): { bg: string; border: string; te
   return { bg: 'bg-emerald-200', border: 'border-emerald-300', text: 'text-emerald-800' }
 }
 
-export function CalendarView({ onAddLog }: { onAddLog?: (date: string) => void }) {
+export function CalendarView({ onAddLog, onEditLog }: { onAddLog?: (date: string) => void; onEditLog?: (id: string) => void | Promise<void> }) {
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
@@ -296,11 +296,18 @@ export function CalendarView({ onAddLog }: { onAddLog?: (date: string) => void }
                     </div>
                   </div>
                   {isLog && (
-                    <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400 hover:text-rose-500 shrink-0" onClick={async () => {
-                      if (!confirm('删除这条补录记录？')) return
-                      await fetch(`/api/log/${s.id}`, { method: 'DELETE' })
-                      loadCalendar()
-                    }}>删除</Button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {onEditLog && (
+                        <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500 hover:text-emerald-600 shrink-0" onClick={() => onEditLog(s.id)}>
+                          <Pencil className="h-3 w-3 mr-1" />编辑
+                        </Button>
+                      )}
+                      <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-400 hover:text-rose-500 shrink-0" onClick={async () => {
+                        if (!confirm('删除这条补录记录？')) return
+                        await fetch(`/api/log/${s.id}`, { method: 'DELETE' })
+                        loadCalendar()
+                      }}>删除</Button>
+                    </div>
                   )}
                 </div>
               )

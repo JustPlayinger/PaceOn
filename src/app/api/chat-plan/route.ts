@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { chatWithCoach, generatePlanFromChat, type ChatMessage, type RunnerProfile, type SessionForReview, type RecentTrainingLog } from '@/lib/ai'
 import { nextMondayOf, findWeekStartingOn, getOrCreateActivePlan } from '@/lib/plan-utils'
+import { replanWeek } from '@/lib/replan'
 
 // 对话式课表生成
 // POST /api/chat-plan  body: { action: 'chat', message, history }  -> AI 教练回复
@@ -55,8 +56,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'generate') {
-      // 生成课表模式
-      const { history, fromWeekId } = body as { history: ChatMessage[]; fromWeekId?: string }
+      // 生成课表模式（含重建 replan：保留已完成天 + 固定休息天）
+      const { history, fromWeekId, replanWeekId, fixedRestDays } = body as { history: ChatMessage[]; fromWeekId?: string; replanWeekId?: string; fixedRestDays?: number[] }
+      if (replanWeekId) {
+        if (!runnerProfile) return NextResponse.json({ error: '请先填写跑者档案' }, { status: 400 })
+        const target = await db.trainingWeek.findUnique({ where: { id: replanWeekId } })
+        if (!target) return NextResponse.json({ error: '未找到该周课表' }, { status: 404 })
+        const replanned = await replanWeek(replanWeekId, runnerProfile, { fixedRestDays, chatHistory: (history || []) as ChatMessage[] })
+        return NextResponse.json(replanned)
+      }
 
       let weekNumber = 1
       let lastReview: string | null = null

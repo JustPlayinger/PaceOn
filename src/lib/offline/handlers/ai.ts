@@ -5,7 +5,8 @@ import { all, get, run, uid, nowIso, logsRecentDays } from '../db'
 import { parseFieldsFromText, detectAppSource } from '@/lib/ocr/parse'
 import { ocrImageBrowser, toDataUrl } from '../ocr'
 import { getDeepseekConfig } from '../config'
-import { callDeepseekApi, OCR_PARSE_PROMPT, parseExtractedFields, generateWeeklyReview, generateNextWeekPlan, generateInitialPlan, generatePlanFromChat, chatWithCoach, generateMicroAdjust, analyzeSingleSession, type RunnerProfile, type SessionForReview, type RecentTrainingLog } from '../ai'
+import { callDeepseekApi, extractTrainingDataFromImage, OCR_PARSE_PROMPT, parseExtractedFields, generateWeeklyReview, generateNextWeekPlan, generateInitialPlan, generatePlanFromChat, chatWithCoach, generateMicroAdjust, analyzeSingleSession, type RunnerProfile, type SessionForReview, type RecentTrainingLog } from '../ai'
+import { replanWeek } from './replan'
 import type { ApiRequest, Handler } from '../types'
 import { json, methodErr, nextMondayOf, findWeekStartingOn, getOrCreateActivePlan, weekFull } from './core'
 
@@ -46,6 +47,21 @@ const extractHandler: Handler = async (req) => {
   const { imageBase64, mimeType } = (req.body || {}) as { imageBase64?: string; mimeType?: string }
   if (!imageBase64) return json({ error: 'imageBase64 is required' }, 400)
   const dataUrl = toDataUrl(imageBase64, mimeType || 'image/jpeg')
+
+  // 路径①：优先调用 DeepSeek 视觉模型直接从图片识别（无需本地 OCR）
+  try {
+    if (getDeepseekConfig().apiKey) {
+      const vlm = await extractTrainingDataFromImage(imageBase64, mimeType || 'image/jpeg')
+      if (vlm && (vlm.distance != null || vlm.duration != null || vlm.avgPace != null)) {
+        return json({ data: vlm })
+      }
+      console.warn('[offline-extract] 视觉模型未返回有效数据，降级本地 OCR')
+    }
+  } catch (e) {
+    console.warn('[offline-extract] 视觉模型不可用，降级本地 OCR:', (e as Error).message)
+  }
+
+  // 路径②：内置本地 OCR 兜底（tesseract.js + 模板解析 + DeepSeek 文本解析，完全离线可用）
   const { text } = await ocrImageBrowser(dataUrl)
   const fields = parseFieldsFromText(text)
   const appSource = detectAppSource(text)
@@ -71,9 +87,9 @@ const extractHandler: Handler = async (req) => {
     groundContactTime: null, verticalOscillation: null, leftRightBalance: null,
     weather: pick(fields.weather, llm?.weather), temperature: pick(fields.temperature, llm?.temperature),
     paceCurve: null, hrCurve: null, elevationCurve: null, cadenceCurve: null, splitPaces: null, hrZones: null,
-    curveAnalysis: hasCore || useLlm ? '本次训练数据由手机端本地 OCR 识别。因 DeepSeek 无多模态能力，折线图曲线数据无法从静态截图自动提取。' : null,
+    curveAnalysis: hasCore || useLlm ? '本次训练数据由手机端本地 OCR 识别（视觉模型不可用时的兜底）。' : null,
     rawText: text,
-    notes: useLlm ? '识别方式：手机端 OCR + DeepSeek 文本解析' : '识别方式：手机端本地 OCR',
+    notes: useLlm ? '识别方式：手机端 OCR + DeepSeek 文本解析' : '识别方式：手机端本地 OCR（兜底）',
     appSource: appSource ?? llm?.appSource ?? null,
   }
   return json({ data: result })
@@ -93,9 +109,16 @@ const reviewHandler: Handler = async (req) => {
 }
 
 const planHandler: Handler = async (req) => {
-  const { fromWeekId } = (req.body || {}) as { fromWeekId?: string }
+  const { fromWeekId, replanWeekId, fixedRestDays } = (req.body || {}) as { fromWeekId?: string; replanWeekId?: string; fixedRestDays?: number[] }
   const runner = runnerProfile()
   if (!runner) return json({ error: '请先填写跑者档案' }, 400)
+
+  // 重建指定周：保留已完成天 + 固定休息天（默认今天），其余由 AI 重排
+  if (replanWeekId) {
+    const target = get('SELECT * FROM TrainingWeek WHERE id = ?', [replanWeekId])
+    if (!target) return json({ error: '未找到该周课表' }, 404)
+    return json(await replanWeek(replanWeekId, { fixedRestDays }))
+  }
 
   const nextMonday = nextMondayOf()
 
@@ -144,7 +167,12 @@ const chatPlanHandler: Handler = async (req) => {
     return json(await chatWithCoach(runner, (history || []).map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })), message))
   }
   if (action === 'generate') {
-    const { history, fromWeekId } = (req.body || {}) as { history?: { role: string; content: string }[]; fromWeekId?: string }
+    const { history, fromWeekId, replanWeekId, fixedRestDays } = (req.body || {}) as { history?: { role: string; content: string }[]; fromWeekId?: string; replanWeekId?: string; fixedRestDays?: number[] }
+    if (replanWeekId) {
+      const target = get('SELECT * FROM TrainingWeek WHERE id = ?', [replanWeekId])
+      if (!target) return json({ error: '未找到该周课表' }, 404)
+      return json(await replanWeek(replanWeekId, { fixedRestDays, chatHistory: (history || []) as { role: string; content: string }[] }))
+    }
     const nextMonday = nextMondayOf()
 
     // 防重复：下周课表已存在则直接复用
